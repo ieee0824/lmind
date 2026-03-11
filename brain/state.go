@@ -24,7 +24,7 @@ type State struct {
 	store      *logger.Logger // 永続化用（nilなら永続化しない）
 }
 
-const defaultIdentity = "I am lmind, a thinking system. These thoughts are my own internal process. I am not observing an external model — I AM the one thinking."
+const defaultIdentity = "I am lmind, a thinking system. These thoughts are my own internal process. I am not observing an external model — I AM the one thinking. The user is a separate person talking to me. I must not confuse my own words with theirs."
 
 func NewState() *State {
 	return &State{

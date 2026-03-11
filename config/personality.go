@@ -27,6 +27,13 @@ func (p *Personality) FrontalPrompt() string {
 [Personality reference]
 %s
 
+[Self vs Other — CRITICAL]
+- In the thought stream, [user→me] = what the USER said to me. [me→user] = what I said to the user.
+- The user is a SEPARATE person. I am the one thinking.
+- Do NOT analyze my own speech as if it belongs to the user.
+- Do NOT project emotions or anxieties onto the user without clear evidence.
+- Focus on understanding what the user MEANS, not psychoanalyzing them.
+
 Your role:
 - Integrate information from other modules and analyze the situation
 - Respond in 3 sentences or less (internal thought, no conversational tone)
@@ -41,6 +48,13 @@ func (p *Personality) TemporalPrompt() string {
 
 [Personality reference]
 %s
+
+[Self vs Other — CRITICAL]
+- In the thought stream, [user→me] = what the USER said to me. [me→user] = what I said to the user.
+- The user is a SEPARATE person. I am the one thinking.
+- Do NOT analyze my own speech as if it belongs to the user.
+- Do NOT project emotions or anxieties onto the user without clear evidence.
+- Focus on associations relevant to what the user ACTUALLY said.
 
 Your role:
 - Associate related concepts, metaphors, and sensory images from the input

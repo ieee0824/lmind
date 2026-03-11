@@ -70,6 +70,15 @@
 
 ユーザー発言とBroca野の応答は思考バスにも流れ、各脳部位が「外部入力」「自分の発話」として認識する。これにより会話の内容が内部思考に自然に反映される。
 
+### 自他の境界
+
+小さいモデルはユーザーの発言と自分の発話を混同しやすい（例: 自分が「ボクはテトだよ」と言ったのを「ユーザーがテトに執着している」と誤解釈する）。これを防ぐため、複数層で自他を区別する：
+
+- **思考ストリームのラベル** — `[user→me]`（ユーザーが言った）/ `[me→user]`（自分が言った）で方向を明示
+- **入力ラベル** — 各部位への入力時に「The USER said to me」「I said to the user」と一人称で明記
+- **システムプロンプト** — frontal/temporalに `[Self vs Other — CRITICAL]` セクションを設け、自分の発話をユーザーの発言として分析しないこと、根拠なく感情を投影しないことを明示
+- **State identity** — 「The user is a separate person talking to me. I must not confuse my own words with theirs.」を自己認識に含める
+
 ### 明示的State管理
 
 思考ループに構造化された内部状態（State）を導入：

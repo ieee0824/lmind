@@ -93,9 +93,9 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 	var inputLabel string
 	switch incoming.From {
 	case "user":
-		inputLabel = fmt.Sprintf("External input (someone spoke to us):\n%s", incoming.Content)
+		inputLabel = fmt.Sprintf("The USER said to me:\n%s", incoming.Content)
 	case "broca":
-		inputLabel = fmt.Sprintf("Our speech output (what we said in response):\n%s", incoming.Content)
+		inputLabel = fmt.Sprintf("I said to the user:\n%s", incoming.Content)
 	default:
 		inputLabel = fmt.Sprintf("Input from brain region [%s]:\n%s", incoming.From, incoming.Content)
 	}
@@ -210,9 +210,9 @@ func formatThoughts(thoughts []bus.Thought) string {
 		}
 		switch t.From {
 		case "user":
-			fmt.Fprintf(&sb, "[external] %s\n", content)
+			fmt.Fprintf(&sb, "[user→me] %s\n", content)
 		case "broca":
-			fmt.Fprintf(&sb, "[speech] %s\n", content)
+			fmt.Fprintf(&sb, "[me→user] %s\n", content)
 		default:
 			fmt.Fprintf(&sb, "[%s] %s\n", t.From, content)
 		}
