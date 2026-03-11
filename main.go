@@ -220,6 +220,17 @@ func main() {
 		Logger:     lg,
 		Interval:   30 * time.Second,
 	})
+	predictionErrorMod := brain.NewPredictionError(brain.PredictionErrorConfig{
+		Bus:    thoughtBus,
+		Logger: lg,
+		State:  mindState,
+	})
+	attentionMod := brain.NewAttention(brain.AttentionConfig{
+		Bus:     thoughtBus,
+		History: history,
+		Logger:  lg,
+		State:   mindState,
+	})
 
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
@@ -236,6 +247,8 @@ func main() {
 	go modulatorMod.Run(ctx)
 	go bonnouMod.Run(ctx)
 	go sentimentMod.Run(ctx)
+	go predictionErrorMod.Run(ctx)
+	go attentionMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 
