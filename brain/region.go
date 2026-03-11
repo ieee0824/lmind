@@ -3,24 +3,25 @@ package brain
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/ieee0824/lmind/bus"
+	"github.com/ieee0824/lmind/logger"
 	"github.com/ieee0824/lmind/ollama"
 )
 
 // Region は脳の一部位を表す
 type Region struct {
-	Name       string // 部位名（例: "frontal", "temporal"）
-	Model      string // 使用するOllamaモデル
-	SystemPrompt string // この部位の役割を定義するシステムプロンプト
-	Interval   time.Duration // 思考ループの間隔
+	Name         string
+	Model        string
+	SystemPrompt string
+	Interval     time.Duration
 
 	client  *ollama.Client
 	bus     *bus.ThoughtBus
 	history *bus.History
+	logger  *logger.Logger
 	inbox   <-chan bus.Thought
 }
 
@@ -32,6 +33,7 @@ type RegionConfig struct {
 	Client       *ollama.Client
 	Bus          *bus.ThoughtBus
 	History      *bus.History
+	Logger       *logger.Logger
 }
 
 func NewRegion(cfg RegionConfig) *Region {
@@ -43,6 +45,7 @@ func NewRegion(cfg RegionConfig) *Region {
 		client:       cfg.Client,
 		bus:          cfg.Bus,
 		history:      cfg.History,
+		logger:       cfg.Logger,
 	}
 	r.inbox = cfg.Bus.Subscribe(cfg.Name)
 	return r
@@ -50,7 +53,7 @@ func NewRegion(cfg RegionConfig) *Region {
 
 // Run は思考ループを開始する。contextがキャンセルされるまで動き続ける。
 func (r *Region) Run(ctx context.Context) {
-	log.Printf("[%s] 思考ループ開始 (model=%s, interval=%s)", r.Name, r.Model, r.Interval)
+	r.logger.Info(r.Name, fmt.Sprintf("思考ループ開始 (model=%s, interval=%s)", r.Model, r.Interval))
 
 	ticker := time.NewTicker(r.Interval)
 	defer ticker.Stop()
@@ -58,15 +61,15 @@ func (r *Region) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[%s] 思考ループ終了", r.Name)
+			r.logger.Info(r.Name, "思考ループ終了")
 			return
 
 		case thought := <-r.inbox:
-			// 他の部位からの思考を受け取って処理
+			r.logger.Info(r.Name, "思考中...")
 			r.process(ctx, thought)
 
 		case <-ticker.C:
-			// 自律的な思考サイクル
+			r.logger.Info(r.Name, "自律思考中...")
 			r.think(ctx)
 		}
 	}
@@ -75,10 +78,10 @@ func (r *Region) Run(ctx context.Context) {
 // process は他部位からの思考に対して応答する
 func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 	recent := r.history.Recent(10)
-	context_str := formatThoughts(recent)
+	contextStr := formatThoughts(recent)
 
 	prompt := fmt.Sprintf("他の脳部位「%s」からの入力:\n%s\n\n最近の思考の流れ:\n%s\n\nこの入力を踏まえて、あなたの役割の観点から考えを述べてください。簡潔に。",
-		incoming.From, incoming.Content, context_str)
+		incoming.From, incoming.Content, contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: r.Model,
@@ -88,7 +91,8 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 		},
 	})
 	if err != nil {
-		log.Printf("[%s] エラー: %v", r.Name, err)
+		r.logger.Error(r.Name, fmt.Sprintf("エラー: %v", err))
+		r.bus.Publish(bus.Thought{From: r.Name, Content: fmt.Sprintf("【エラー】%v", err)})
 		return
 	}
 
@@ -104,13 +108,13 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 func (r *Region) think(ctx context.Context) {
 	recent := r.history.Recent(10)
 	if len(recent) == 0 {
-		return // まだ何も思考がなければスキップ
+		return
 	}
 
-	context_str := formatThoughts(recent)
+	contextStr := formatThoughts(recent)
 
 	prompt := fmt.Sprintf("最近の思考の流れ:\n%s\n\nこれらを踏まえて、あなたの役割の観点から新しい考えや気づきがあれば述べてください。なければ「特になし」と答えてください。簡潔に。",
-		context_str)
+		contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: r.Model,
@@ -120,7 +124,7 @@ func (r *Region) think(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		log.Printf("[%s] 自律思考エラー: %v", r.Name, err)
+		r.logger.Error(r.Name, fmt.Sprintf("自律思考エラー: %v", err))
 		return
 	}
 

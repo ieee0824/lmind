@@ -3,12 +3,12 @@ package brain
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	memai "github.com/ieee0824/memAI-go"
 	"github.com/ieee0824/lmind/bus"
+	"github.com/ieee0824/lmind/logger"
 	"github.com/ieee0824/lmind/ollama"
 )
 
@@ -19,15 +19,16 @@ type Hippocampus struct {
 	Model    string
 	Interval time.Duration
 
-	client    *ollama.Client
-	bus       *bus.ThoughtBus
-	history   *bus.History
-	inbox     <-chan bus.Thought
-	stm       *memai.STM
-	ltm       *memai.LTM[int64]
-	store     memai.MemoryStore[int64]
-	analyzer  memai.EmotionAnalyzer
-	turn      int
+	client   *ollama.Client
+	bus      *bus.ThoughtBus
+	history  *bus.History
+	logger   *logger.Logger
+	inbox    <-chan bus.Thought
+	stm      *memai.STM
+	ltm      *memai.LTM[int64]
+	store    memai.MemoryStore[int64]
+	analyzer memai.EmotionAnalyzer
+	turn     int
 }
 
 type HippocampusConfig struct {
@@ -35,6 +36,7 @@ type HippocampusConfig struct {
 	Client      *ollama.Client
 	Bus         *bus.ThoughtBus
 	History     *bus.History
+	Logger      *logger.Logger
 	Store       memai.MemoryStore[int64]
 	EmbeddingFn memai.EmbeddingFunc
 	Interval    time.Duration
@@ -48,6 +50,7 @@ func NewHippocampus(cfg HippocampusConfig) *Hippocampus {
 		client:   cfg.Client,
 		bus:      cfg.Bus,
 		history:  cfg.History,
+		logger:   cfg.Logger,
 		stm:      memai.NewSTM(memai.DefaultSTMConfig()),
 		ltm:      memai.NewLTM(cfg.Store, cfg.EmbeddingFn, memai.DefaultLTMConfig()),
 		store:    cfg.Store,
@@ -59,7 +62,7 @@ func NewHippocampus(cfg HippocampusConfig) *Hippocampus {
 
 // Run は記憶野の処理ループを開始する
 func (h *Hippocampus) Run(ctx context.Context) {
-	log.Printf("[%s] 記憶野ループ開始 (model=%s)", h.Name, h.Model)
+	h.logger.Info(h.Name, fmt.Sprintf("記憶野ループ開始 (model=%s)", h.Model))
 
 	ticker := time.NewTicker(h.Interval)
 	defer ticker.Stop()
@@ -67,15 +70,15 @@ func (h *Hippocampus) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[%s] 記憶野ループ終了", h.Name)
+			h.logger.Info(h.Name, "記憶野ループ終了")
 			return
 
 		case thought := <-h.inbox:
+			h.logger.Info(h.Name, "記憶処理中...")
 			h.turn++
 			h.process(ctx, thought)
 
 		case <-ticker.C:
-			// 定期的にSTMを整理
 			h.consolidate(ctx)
 		}
 	}
@@ -88,7 +91,7 @@ func (h *Hippocampus) process(ctx context.Context, incoming bus.Thought) {
 	// 感情分析
 	emotion, err := h.analyzer.Analyze(ctx, content)
 	if err != nil {
-		log.Printf("[%s] 感情分析エラー: %v", h.Name, err)
+		h.logger.Error(h.Name, fmt.Sprintf("感情分析エラー: %v", err))
 		emotion = &memai.EmotionalState{Primary: memai.EmotionNeutral}
 	}
 
@@ -98,32 +101,32 @@ func (h *Hippocampus) process(ctx context.Context, incoming bus.Thought) {
 	// STMに新しいアイテムを追加
 	keywords := extractKeywords(content)
 	h.stm.Add(&memai.WorkingMemoryItem{
-		Topic:       incoming.From,
-		Content:     content,
-		Keywords:    keywords,
-		Activation:  1.0,
-		TurnCreated: h.turn,
+		Topic:        incoming.From,
+		Content:      content,
+		Keywords:     keywords,
+		Activation:   1.0,
+		TurnCreated:  h.turn,
 		TurnAccessed: h.turn,
-		Emotional:   emotion.Intensity > 0.3,
+		Emotional:    emotion.Intensity > 0.3,
 	})
 
 	// LTMに保存
 	if err := h.saveLTM(ctx, incoming, emotion); err != nil {
-		log.Printf("[%s] LTM保存エラー: %v", h.Name, err)
+		h.logger.Error(h.Name, fmt.Sprintf("LTM保存エラー: %v", err))
 	}
 
-	// LTMから関連記憶を検索
+	// LTMから関連記憶を検索（embedding非対応モデルの場合はスキップ）
 	results, err := h.ltm.Search(ctx, memai.SearchQuery{
 		Query:              content,
 		EmotionalIntensity: emotion.Intensity,
 	})
 	if err != nil {
-		log.Printf("[%s] LTM検索エラー: %v", h.Name, err)
+		// embedding非対応等で検索できない場合はSTMのみで動作を継続
 		return
 	}
 
 	// 関連記憶があれば想起として思考バスに流す
-	if len(results) > 1 { // 自分自身以外の記憶がある場合
+	if len(results) > 1 {
 		recall := h.formatRecall(results, emotion)
 		if recall != "" {
 			thought := bus.Thought{
@@ -143,8 +146,7 @@ func (h *Hippocampus) consolidate(ctx context.Context) {
 		return
 	}
 
-	// 現在のSTMの状態をログ
-	log.Printf("[%s] STM整理中: %d items", h.Name, len(items))
+	h.logger.Info(h.Name, fmt.Sprintf("STM整理中: %d items", len(items)))
 
 	// STMをdecayさせる（空メッセージでupdate）
 	h.turn++
@@ -182,7 +184,6 @@ func (h *Hippocampus) formatRecall(results []memai.SearchResult[int64], emotion 
 
 // extractKeywords は簡易的にキーワードを抽出する
 func extractKeywords(content string) []string {
-	// スペースと句読点で分割した簡易実装
 	words := strings.FieldsFunc(content, func(r rune) bool {
 		return r == ' ' || r == '。' || r == '、' || r == '\n' || r == '　'
 	})
@@ -190,7 +191,7 @@ func extractKeywords(content string) []string {
 	var keywords []string
 	for _, w := range words {
 		w = strings.TrimSpace(w)
-		if len([]rune(w)) >= 2 { // 2文字以上のみ
+		if len([]rune(w)) >= 2 {
 			keywords = append(keywords, w)
 		}
 	}
