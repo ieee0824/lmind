@@ -188,6 +188,12 @@ func main() {
 		Logger:   lg,
 		Interval: 60 * time.Second,
 	})
+	groundingMod := brain.NewGrounding(brain.GroundingConfig{
+		Bus:      thoughtBus,
+		Logger:   lg,
+		Interval: 40 * time.Second,
+		Hosts:    client.Hosts(),
+	})
 
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
@@ -200,6 +206,7 @@ func main() {
 	go noveltyMod.Run(ctx)
 	go criticMod.Run(ctx)
 	go curiosityMod.Run(ctx)
+	go groundingMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 
