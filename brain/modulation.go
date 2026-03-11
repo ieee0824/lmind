@@ -14,10 +14,15 @@ import (
 
 // Modulation は各モジュールのゲイン（出力強度）を管理する。
 // gain = 1.0 が通常、0.0 で完全抑制、>1.0 でブースト。
+// ユーザー入力がなければ徐々に減衰し、入力があれば復帰する。
 type Modulation struct {
-	mu    sync.RWMutex
-	gains map[string]float64
+	mu             sync.RWMutex
+	gains          map[string]float64
+	lastUserInput  time.Time
 }
+
+// idleDecayStart はユーザー入力がない場合に減衰を開始するまでの待機時間
+const idleDecayStart = 60 * time.Second
 
 func NewModulation() *Modulation {
 	return &Modulation{
@@ -28,7 +33,22 @@ func NewModulation() *Modulation {
 			"curiosity":  1.0,
 			"grounding":  1.0,
 		},
+		lastUserInput: time.Now(),
 	}
+}
+
+// TouchUserInput はユーザー入力があったことを記録する
+func (m *Modulation) TouchUserInput() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastUserInput = time.Now()
+}
+
+// IdleDuration はユーザー入力からの経過時間を返す
+func (m *Modulation) IdleDuration() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return time.Since(m.lastUserInput)
 }
 
 // Gain はモジュールの現在のゲインを返す（未登録なら1.0）
@@ -172,6 +192,7 @@ func (m *Modulator) onStagnation() {
 
 // onUserInput はユーザー入力時のゲイン調整（全復帰）
 func (m *Modulator) onUserInput() {
+	m.mod.TouchUserInput()
 	m.mod.Set("frontal", 1.0)
 	m.mod.Set("temporal", 1.0)
 	m.mod.Set("hypothesis", 1.0)
@@ -192,22 +213,37 @@ func (m *Modulator) onNovelty() {
 	}
 }
 
-// recover は定期的にゲインを通常値に向けて緩やかに回復させる
+// recover は定期的にゲインを調整する。
+// ユーザー入力後は通常値(1.0)に向けて回復。
+// 入力がない間は回復を停止し、思考の収束に任せて沈黙に向かわせる。
 func (m *Modulator) recover() {
+	idle := m.mod.IdleDuration()
 	snapshot := m.mod.Snapshot()
 	changed := false
 
-	for name, gain := range snapshot {
-		if gain < 1.0 {
-			m.mod.Set(name, gain+0.1)
-			changed = true
-		} else if gain > 1.0 {
-			m.mod.Set(name, gain-0.1)
-			changed = true
+	if idle < idleDecayStart {
+		// 入力直後: 通常の回復（1.0に向かう）
+		for name, gain := range snapshot {
+			if gain < 1.0 {
+				m.mod.Set(name, gain+0.1)
+				changed = true
+			} else if gain > 1.0 {
+				m.mod.Set(name, gain-0.1)
+				changed = true
+			}
+		}
+	} else {
+		// アイドル中: 回復しない。停滞検知(critic)による減衰だけが進む。
+		// ブースト中のものは通常値に戻す
+		for name, gain := range snapshot {
+			if gain > 1.0 {
+				m.mod.Set(name, gain-0.1)
+				changed = true
+			}
 		}
 	}
 
 	if changed {
-		m.logger.Info("modulator", fmt.Sprintf("ゲイン回復: %s", m.mod.Format()))
+		m.logger.Info("modulator", fmt.Sprintf("ゲイン調整: %s (idle=%s)", m.mod.Format(), idle.Round(time.Second)))
 	}
 }

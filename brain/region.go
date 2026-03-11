@@ -186,6 +186,8 @@ func rewriteFirstPerson(text string) string {
 		{"this model ", "I "},
 		{"The AI ", "I "},
 		{"the AI ", "I "},
+		{"The AI's ", "My "},
+		{"the AI's ", "my "},
 		{"It is ", "I am "},
 		{"it is ", "I am "},
 		{"Its ", "My "},

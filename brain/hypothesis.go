@@ -126,7 +126,7 @@ Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, go
 	resp, err := h.client.Chat(ctx, ollama.ChatRequest{
 		Model: h.model,
 		Messages: []ollama.Message{
-			{Role: "system", Content: "You are a hypothesis generation module. Your role is to form and refine hypotheses based on observations and analysis. Always respond in English."},
+			{Role: "system", Content: "You are a hypothesis generation module. Form hypotheses about what the USER wants, means, or is interested in. Do NOT hypothesize about your own behavior or how 'the AI' works. Focus on the user's intent, topic, or situation. Always respond in English."},
 			{Role: "user", Content: prompt},
 		},
 	})
@@ -135,7 +135,7 @@ Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, go
 		return
 	}
 
-	result := truncateToSentences(strings.TrimSpace(resp.Message.Content), 2)
+	result := rewriteFirstPerson(truncateToSentences(strings.TrimSpace(resp.Message.Content), 2))
 	if result == "" || strings.Contains(strings.ToUpper(result), "NONE") {
 		return
 	}
@@ -197,7 +197,7 @@ Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr, s
 	resp, err := h.client.Chat(ctx, ollama.ChatRequest{
 		Model: h.model,
 		Messages: []ollama.Message{
-			{Role: "system", Content: "You are a hypothesis review module. Evaluate and refine hypotheses. Always respond in English."},
+			{Role: "system", Content: "You are a hypothesis review module. Evaluate hypotheses about the user's intent or topic. Do NOT hypothesize about your own behavior. Always respond in English."},
 			{Role: "user", Content: prompt},
 		},
 	})
@@ -206,7 +206,7 @@ Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr, s
 		return
 	}
 
-	result := truncateToSentences(strings.TrimSpace(resp.Message.Content), 2)
+	result := rewriteFirstPerson(truncateToSentences(strings.TrimSpace(resp.Message.Content), 2))
 	if result == "" || strings.Contains(strings.ToUpper(result), "VALID") {
 		return
 	}
