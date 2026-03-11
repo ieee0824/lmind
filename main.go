@@ -140,7 +140,7 @@ func main() {
 		Logger:  lg,
 		Store:   store,
 		EmbeddingFn: func(ctx context.Context, text string) ([]float64, error) {
-			return client.Embedding(ctx, "gemma3:1b", text)
+			return client.Embedding(ctx, "nomic-embed-text", text)
 		},
 		Interval: 25 * time.Second,
 	})
