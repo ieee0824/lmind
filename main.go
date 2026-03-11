@@ -91,8 +91,9 @@ func main() {
 		}
 	}()
 
-	// 明示的な内部状態（goal/hypothesis）
+	// 明示的な内部状態（goal/hypothesis）— SQLiteから前回のstateを復元
 	mindState := brain.NewState()
+	mindState.RestoreFrom(lg)
 
 	// モジュールゲイン管理（ループ時に動的調整）
 	modulation := brain.NewModulation()

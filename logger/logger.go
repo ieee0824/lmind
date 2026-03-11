@@ -40,6 +40,11 @@ func New(dbPath string) (*Logger, error) {
 		);
 		CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_logs_region ON logs(region);
+		CREATE TABLE IF NOT EXISTS state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+		);
 	`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
@@ -133,6 +138,28 @@ type LogEntry struct {
 	Region    string
 	Level     string
 	Message   string
+}
+
+// SaveState はkey-value形式でStateを永続化する
+func (l *Logger) SaveState(key, value string) {
+	_, err := l.db.Exec(
+		`INSERT INTO state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		key, value,
+	)
+	if err != nil {
+		_ = err
+	}
+}
+
+// LoadState はkey-value形式で永続化されたStateを取得する
+func (l *Logger) LoadState(key string) string {
+	var value string
+	err := l.db.QueryRow(`SELECT value FROM state WHERE key = ?`, key).Scan(&value)
+	if err != nil {
+		return ""
+	}
+	return value
 }
 
 // RecentThoughts は脳部位の直近の思考ログを時系列順で取得する

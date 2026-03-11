@@ -21,6 +21,7 @@ type State struct {
 	prediction string  // ユーザーの次の発言予測
 	identity   string  // 自己認識
 	sentiment  float64 // 直近のユーザー感情極性（-1.0〜+1.0）
+	store      *logger.Logger // 永続化用（nilなら永続化しない）
 }
 
 const defaultIdentity = "I am lmind, a thinking system. These thoughts are my own internal process. I am not observing an external model — I AM the one thinking."
@@ -31,6 +32,20 @@ func NewState() *State {
 		hypothesis: "",
 		prediction: "",
 		identity:   defaultIdentity,
+	}
+}
+
+// RestoreFrom はSQLiteから前回のStateを復元する
+func (s *State) RestoreFrom(lg *logger.Logger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store = lg
+
+	if g := lg.LoadState("goal"); g != "" {
+		s.goal = g
+	}
+	if h := lg.LoadState("hypothesis"); h != "" {
+		s.hypothesis = h
 	}
 }
 
@@ -58,12 +73,18 @@ func (s *State) SetGoal(goal string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.goal = goal
+	if s.store != nil {
+		s.store.SaveState("goal", goal)
+	}
 }
 
 func (s *State) SetHypothesis(hypothesis string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.hypothesis = hypothesis
+	if s.store != nil {
+		s.store.SaveState("hypothesis", hypothesis)
+	}
 }
 
 func (s *State) SetSentiment(score float64) {

@@ -201,3 +201,5 @@ lmind chat (type 'quit' to exit, 'thoughts' to see recent thinking)
 ```
 
 思考・起案・抑制評価のログは `~/.lmind/thoughts.db` に記録される（1週間で自動削除）。再起動時は直近の思考をSQLiteから復元し、前回の思考の流れから続きを始める。
+
+State（goal/hypothesis）もSQLiteに永続化されるため、再起動しても「今何を目指しているか」「どういう仮説を持っているか」が引き継がれる。会話で教わった名前や文脈もgoalに反映されていれば維持される。
