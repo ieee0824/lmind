@@ -91,7 +91,7 @@ func main() {
 		}
 	}()
 
-	// 明示的な内部状態（goal/hypothesis）— SQLiteから前回のstateを復元
+	// 明示的な内部状態（goal/hypothesis）— SQLiteから前回のgoalを復元
 	mindState := brain.NewState()
 	mindState.RestoreFrom(lg)
 

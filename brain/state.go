@@ -35,7 +35,9 @@ func NewState() *State {
 	}
 }
 
-// RestoreFrom はSQLiteから前回のStateを復元する
+// RestoreFrom はSQLiteから前回のStateを復元する。
+// goalのみ復元する。hypothesisはセッション間で引き継がない
+// （古い仮説が全モジュールの解釈を歪める問題の防止）。
 func (s *State) RestoreFrom(lg *logger.Logger) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -44,9 +46,7 @@ func (s *State) RestoreFrom(lg *logger.Logger) {
 	if g := lg.LoadState("goal"); g != "" {
 		s.goal = g
 	}
-	if h := lg.LoadState("hypothesis"); h != "" {
-		s.hypothesis = h
-	}
+	// hypothesisは意図的に復元しない
 }
 
 // Snapshot はstateの現在値を返す（読み取り専用コピー）
