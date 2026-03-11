@@ -200,6 +200,12 @@ func main() {
 		Interval: 40 * time.Second,
 		Hosts:    client.Hosts(),
 	})
+	bonnouMod := brain.NewBonnou(brain.BonnouConfig{
+		Bus:      thoughtBus,
+		History:  history,
+		Logger:   lg,
+		Interval: 50 * time.Second,
+	})
 	modulatorMod := brain.NewModulator(brain.ModulatorConfig{
 		Modulation: modulation,
 		Bus:        thoughtBus,
@@ -221,6 +227,7 @@ func main() {
 	go curiosityMod.Run(ctx)
 	go groundingMod.Run(ctx)
 	go modulatorMod.Run(ctx)
+	go bonnouMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 
