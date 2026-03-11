@@ -206,6 +206,12 @@ func main() {
 		Logger:   lg,
 		Interval: 50 * time.Second,
 	})
+	sentimentMod := brain.NewSentiment(brain.SentimentConfig{
+		Bus:        thoughtBus,
+		Logger:     lg,
+		State:      mindState,
+		Modulation: modulation,
+	})
 	modulatorMod := brain.NewModulator(brain.ModulatorConfig{
 		Modulation: modulation,
 		Bus:        thoughtBus,
@@ -228,6 +234,7 @@ func main() {
 	go groundingMod.Run(ctx)
 	go modulatorMod.Run(ctx)
 	go bonnouMod.Run(ctx)
+	go sentimentMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 
