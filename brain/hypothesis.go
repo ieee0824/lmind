@@ -64,8 +64,9 @@ func (h *Hypothesis) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case t := <-h.inbox:
-			// 前頭葉・側頭葉・ユーザー入力に反応して仮説を更新
-			if t.From == "frontal" || t.From == "temporal" || t.From == "user" {
+			// 前頭葉・側頭葉の分析結果にのみ反応（ユーザー入力では直接発火しない）
+			// 順序: input → temporal/frontal(解釈) → hypothesis(仮説)
+			if t.From == "frontal" || t.From == "temporal" {
 				h.generate(ctx, t)
 			}
 		case <-ticker.C:
@@ -83,15 +84,28 @@ func (h *Hypothesis) Run(ctx context.Context) {
 func (h *Hypothesis) generate(ctx context.Context, incoming bus.Thought) {
 	goal, currentHyp := h.state.Snapshot()
 
+	// センチメントゲーティング: ポジティブ文脈でanxiety系仮説を生成しない
+	sentiment := h.state.Sentiment()
+	if sentiment > 0.3 && currentHyp != "" {
+		lower := strings.ToLower(currentHyp)
+		for _, kw := range []string{"anxiety", "distress", "instability", "fear", "worry", "crisis", "turmoil"} {
+			if strings.Contains(lower, kw) {
+				h.logger.Info("hypothesis", "ポジティブ文脈のためanxiety仮説をスキップ")
+				return
+			}
+		}
+	}
+
 	recent := h.history.Recent(8)
 	contextStr := formatThoughts(recent)
 
-	var inputLabel string
-	switch incoming.From {
-	case "user":
-		inputLabel = fmt.Sprintf("New external input: %s", incoming.Content)
-	default:
-		inputLabel = fmt.Sprintf("New analysis from [%s]: %s", incoming.From, incoming.Content)
+	inputLabel := fmt.Sprintf("New analysis from [%s]: %s", incoming.From, incoming.Content)
+
+	sentimentCtx := ""
+	if sentiment > 0.3 {
+		sentimentCtx = "\nIMPORTANT: The user's current sentiment is POSITIVE. Do not generate anxiety/distress hypotheses."
+	} else if sentiment < -0.3 {
+		sentimentCtx = "\nNote: The user's current sentiment is negative."
 	}
 
 	prompt := fmt.Sprintf(`Goal: %s
@@ -101,13 +115,13 @@ Current hypothesis: %s
 
 Recent thought stream:
 %s
-
+%s
 Based on the goal, current hypothesis, and new input, generate or update the hypothesis.
 - If the new input supports the current hypothesis, refine it
 - If the new input contradicts it, propose a new hypothesis
 - If there's no clear hypothesis yet, propose one
 - If nothing meaningful can be hypothesized, reply "NONE"
-Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, goal, currentHyp, inputLabel, contextStr)
+Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, goal, currentHyp, inputLabel, contextStr, sentimentCtx)
 
 	resp, err := h.client.Chat(ctx, ollama.ChatRequest{
 		Model: h.model,
@@ -162,17 +176,23 @@ func (h *Hypothesis) review(ctx context.Context) {
 
 	contextStr := formatThoughts(recent)
 
+	sentimentCtx := ""
+	sentiment := h.state.Sentiment()
+	if sentiment > 0.3 {
+		sentimentCtx = "\nIMPORTANT: The user's current sentiment is POSITIVE. If the hypothesis contains anxiety/distress themes, it is likely outdated."
+	}
+
 	prompt := fmt.Sprintf(`Goal: %s
 Current hypothesis: %s
 
 Recent thought stream:
 %s
-
+%s
 Review the current hypothesis against recent thoughts.
 - Is it still valid? If so, reply "VALID"
 - Does it need refinement? Output the refined hypothesis in one sentence
 - Is it contradicted? Output a new hypothesis in one sentence
-Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr)
+Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr, sentimentCtx)
 
 	resp, err := h.client.Chat(ctx, ollama.ChatRequest{
 		Model: h.model,

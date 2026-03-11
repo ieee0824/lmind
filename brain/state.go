@@ -16,10 +16,11 @@ import (
 // prediction（ユーザーの次の発言予測）を保持する。
 type State struct {
 	mu         sync.RWMutex
-	goal       string // 現在の目標・関心事
-	hypothesis string // 現在の仮説・理解
-	prediction string // ユーザーの次の発言予測
-	identity   string // 自己認識
+	goal       string  // 現在の目標・関心事
+	hypothesis string  // 現在の仮説・理解
+	prediction string  // ユーザーの次の発言予測
+	identity   string  // 自己認識
+	sentiment  float64 // 直近のユーザー感情極性（-1.0〜+1.0）
 }
 
 const defaultIdentity = "I am lmind, a thinking system. These thoughts are my own internal process. I am not observing an external model — I AM the one thinking."
@@ -65,16 +66,27 @@ func (s *State) SetHypothesis(hypothesis string) {
 	s.hypothesis = hypothesis
 }
 
+func (s *State) SetSentiment(score float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sentiment = score
+}
+
+// Sentiment は直近のユーザー感情極性を返す
+func (s *State) Sentiment() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sentiment
+}
+
 // Format はプロンプトに注入するための文字列を生成する
 func (s *State) Format() string {
 	s.mu.RLock()
 	goal := s.goal
 	hyp := s.hypothesis
 	pred := s.prediction
-	s.mu.RUnlock()
-
-	s.mu.RLock()
 	identity := s.identity
+	sentiment := s.sentiment
 	s.mu.RUnlock()
 
 	var sb strings.Builder
@@ -86,6 +98,15 @@ func (s *State) Format() string {
 	}
 	if pred != "" {
 		sb.WriteString(fmt.Sprintf("Predicted next user input: %s\n", pred))
+	}
+	if sentiment != 0 {
+		label := "neutral"
+		if sentiment > 0.3 {
+			label = "positive"
+		} else if sentiment < -0.3 {
+			label = "negative"
+		}
+		sb.WriteString(fmt.Sprintf("User sentiment: %s (%.2f)\n", label, sentiment))
 	}
 	sb.WriteString("=====================")
 	return sb.String()

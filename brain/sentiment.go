@@ -60,6 +60,11 @@ func (s *Sentiment) evaluate(t bus.Thought) {
 	score := sentimentScore(t.Content)
 	s.logger.Info("sentiment", fmt.Sprintf("スコア: %.2f (%s)", score, t.Content))
 
+	// Stateに感情極性を記録（全モジュールのプロンプトに反映される）
+	if s.state != nil {
+		s.state.SetSentiment(score)
+	}
+
 	if score > 0.3 {
 		// ポジティブ入力: temporalの物語生成を抑制し、frontalの文脈解釈を強化
 		s.modulation.Set("temporal", s.modulation.Gain("temporal")-0.2)
@@ -68,11 +73,22 @@ func (s *Sentiment) evaluate(t bus.Thought) {
 		// anxiety固定された仮説を無効化
 		s.clearAnxietyHypothesis()
 
+		// バスに感情文脈を通知（temporalが解釈する前に見えるようにする）
+		s.bus.Publish(bus.Thought{
+			From:    "sentiment",
+			Content: fmt.Sprintf("User sentiment: positive (%.2f). Interpret input in positive context.", score),
+		})
+
 		s.logger.Info("sentiment", fmt.Sprintf("ポジティブ補正: temporal=%.1f, frontal=%.1f",
 			s.modulation.Gain("temporal"), s.modulation.Gain("frontal")))
 	} else if score < -0.3 {
 		// ネガティブ入力: temporalを少しブーストして共感的文脈理解を促す
 		s.modulation.Set("temporal", s.modulation.Gain("temporal")+0.1)
+
+		s.bus.Publish(bus.Thought{
+			From:    "sentiment",
+			Content: fmt.Sprintf("User sentiment: negative (%.2f). Empathetic context interpretation needed.", score),
+		})
 
 		s.logger.Info("sentiment", fmt.Sprintf("ネガティブ補正: temporal=%.1f", s.modulation.Gain("temporal")))
 	}
