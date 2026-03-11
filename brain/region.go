@@ -22,6 +22,7 @@ type Region struct {
 	bus     *bus.ThoughtBus
 	history *bus.History
 	logger  *logger.Logger
+	state   *State
 	inbox   <-chan bus.Thought
 }
 
@@ -34,6 +35,7 @@ type RegionConfig struct {
 	Bus          *bus.ThoughtBus
 	History      *bus.History
 	Logger       *logger.Logger
+	State        *State
 }
 
 func NewRegion(cfg RegionConfig) *Region {
@@ -46,6 +48,7 @@ func NewRegion(cfg RegionConfig) *Region {
 		bus:          cfg.Bus,
 		history:      cfg.History,
 		logger:       cfg.Logger,
+		state:        cfg.State,
 	}
 	r.inbox = cfg.Bus.Subscribe(cfg.Name)
 	return r
@@ -90,8 +93,13 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 		inputLabel = fmt.Sprintf("Input from brain region [%s]:\n%s", incoming.From, incoming.Content)
 	}
 
-	prompt := fmt.Sprintf("%s\n\nRecent thought stream:\n%s\n\nBased on this input, provide your analysis from your role's perspective. Be concise.",
-		inputLabel, contextStr)
+	stateStr := ""
+	if r.state != nil {
+		stateStr = r.state.Format() + "\n\n"
+	}
+
+	prompt := fmt.Sprintf("%s%s\n\nRecent thought stream:\n%s\n\nBased on this input and current state, provide your analysis from your role's perspective. Be concise.",
+		stateStr, inputLabel, contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: r.Model,
@@ -123,8 +131,13 @@ func (r *Region) think(ctx context.Context) {
 
 	contextStr := formatThoughts(recent)
 
-	prompt := fmt.Sprintf("Recent thought stream:\n%s\n\nBased on these, share any new insights or observations from your role's perspective. If none, reply \"nothing\". Be concise.",
-		contextStr)
+	stateStr := ""
+	if r.state != nil {
+		stateStr = r.state.Format() + "\n\n"
+	}
+
+	prompt := fmt.Sprintf("%sRecent thought stream:\n%s\n\nBased on current state and these thoughts, share any new insights or observations from your role's perspective. If none, reply \"nothing\". Be concise.",
+		stateStr, contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: r.Model,

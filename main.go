@@ -91,6 +91,19 @@ func main() {
 		}
 	}()
 
+	// 明示的な内部状態（goal/hypothesis）
+	mindState := brain.NewState()
+
+	// State更新モジュール（ユーザー入力→goal、前頭葉→hypothesis）
+	stateUpdater := brain.NewStateUpdater(brain.StateUpdaterConfig{
+		State:   mindState,
+		Client:  client,
+		Model:   "gemma3:1b",
+		Bus:     thoughtBus,
+		History: history,
+		Logger:  lg,
+	})
+
 	// 前頭葉: 推論・判断・統合を担当（重いモデル）
 	frontal := brain.NewRegion(brain.RegionConfig{
 		Name:         "frontal",
@@ -101,6 +114,7 @@ func main() {
 		Bus:          thoughtBus,
 		History:      history,
 		Logger:       lg,
+		State:        mindState,
 	})
 
 	// 側頭葉: 連想・記憶想起・パターン認識を担当（軽いモデル）
@@ -113,6 +127,7 @@ func main() {
 		Bus:          thoughtBus,
 		History:      history,
 		Logger:       lg,
+		State:        mindState,
 	})
 
 	// 海馬: 記憶の形成・想起を担当（memAI-go使用）
@@ -128,6 +143,17 @@ func main() {
 			return client.Embedding(ctx, "gemma3:1b", text)
 		},
 		Interval: 25 * time.Second,
+	})
+
+	// 仮説生成モジュール: 前頭葉・側頭葉の出力から仮説を生成・更新
+	hypothesisMod := brain.NewHypothesis(brain.HypothesisConfig{
+		Model:    "gemma3:1b",
+		Client:   client,
+		Bus:      thoughtBus,
+		History:  history,
+		Logger:   lg,
+		State:    mindState,
+		Interval: 35 * time.Second,
 	})
 
 	// メタモジュール（LLM不使用・アルゴリズム駆動）
@@ -150,8 +176,10 @@ func main() {
 	})
 
 	// 脳部位の思考ループを開始
+	go stateUpdater.Run(ctx)
 	go frontal.Run(ctx)
 	go temporal.Run(ctx)
+	go hypothesisMod.Run(ctx)
 	go hippocampus.Run(ctx)
 	go noveltyMod.Run(ctx)
 	go criticMod.Run(ctx)
