@@ -144,8 +144,16 @@ func (s *Server) Run(ctx context.Context) {
 			// botの応答も会話履歴に追加
 			s.addConvHistory("bot: " + response)
 
-			// 応答完了後にユーザー入力をバスに流す（Ollama渋滞を防ぐ）
+			// 応答完了後にユーザー入力とBroca応答をバスに流す（Ollama渋滞を防ぐ）
 			s.bus.Publish(userThought)
+			if response != "" {
+				brocaThought := bus.Thought{
+					From:    "broca",
+					Content: fmt.Sprintf("I said to the user: %s", response),
+				}
+				s.history.Record(brocaThought)
+				s.bus.Publish(brocaThought)
+			}
 		}
 	}
 }

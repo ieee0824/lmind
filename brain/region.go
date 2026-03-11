@@ -80,8 +80,18 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 	recent := r.history.Recent(10)
 	contextStr := formatThoughts(recent)
 
-	prompt := fmt.Sprintf("Input from brain region [%s]:\n%s\n\nRecent thought stream:\n%s\n\nBased on this input, provide your analysis from your role's perspective. Be concise.",
-		incoming.From, incoming.Content, contextStr)
+	var inputLabel string
+	switch incoming.From {
+	case "user":
+		inputLabel = fmt.Sprintf("External input (someone spoke to us):\n%s", incoming.Content)
+	case "broca":
+		inputLabel = fmt.Sprintf("Our speech output (what we said in response):\n%s", incoming.Content)
+	default:
+		inputLabel = fmt.Sprintf("Input from brain region [%s]:\n%s", incoming.From, incoming.Content)
+	}
+
+	prompt := fmt.Sprintf("%s\n\nRecent thought stream:\n%s\n\nBased on this input, provide your analysis from your role's perspective. Be concise.",
+		inputLabel, contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: r.Model,
@@ -151,7 +161,14 @@ func formatThoughts(thoughts []bus.Thought) string {
 		if t.Summary != "" {
 			content = t.Summary
 		}
-		fmt.Fprintf(&sb, "[%s] %s\n", t.From, content)
+		switch t.From {
+		case "user":
+			fmt.Fprintf(&sb, "[external] %s\n", content)
+		case "broca":
+			fmt.Fprintf(&sb, "[speech] %s\n", content)
+		default:
+			fmt.Fprintf(&sb, "[%s] %s\n", t.From, content)
+		}
 	}
 	return sb.String()
 }

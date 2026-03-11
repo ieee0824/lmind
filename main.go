@@ -51,6 +51,9 @@ func main() {
 	client := ollama.New("")
 	lg.Info("system", fmt.Sprintf("Ollamaホスト: %s", strings.Join(client.Hosts(), ", ")))
 
+	// 複数ホスト時は60秒ごとに分散統計をログ出力
+	client.StatsReporter(ctx, 60*time.Second, nil)
+
 	thoughtBus := bus.New()
 	history := bus.NewHistory(100)
 
