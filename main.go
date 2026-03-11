@@ -147,7 +147,7 @@ func main() {
 
 	// 仮説生成モジュール: 前頭葉・側頭葉の出力から仮説を生成・更新
 	hypothesisMod := brain.NewHypothesis(brain.HypothesisConfig{
-		Model:    "gemma3:1b",
+		Model:    "gemma3:4b",
 		Client:   client,
 		Bus:      thoughtBus,
 		History:  history,
