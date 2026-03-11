@@ -3,6 +3,7 @@ package chat
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -15,14 +16,31 @@ import (
 	"github.com/ieee0824/lmind/ollama"
 )
 
+// ServerConfig はチャットサーバーの設定
+type ServerConfig struct {
+	Client           *ollama.Client
+	Model            string
+	JudgeModel       string // モード判定用の軽量モデル
+	Bus              *bus.ThoughtBus
+	History          *bus.History
+	Logger           *logger.Logger
+	ChatPrompt       string // 雑談モード用
+	TaskPrompt       string // 秘書モード用
+	ModeJudgePrompt  string // モード判定用
+	InhibitionPrompt string
+}
+
 // Server はCLIベースのチャットインターフェース
 type Server struct {
 	client           *ollama.Client
 	model            string
+	judgeModel       string
 	bus              *bus.ThoughtBus
 	history          *bus.History
 	logger           *logger.Logger
-	systemPrompt     string
+	chatPrompt       string
+	taskPrompt       string
+	modeJudgePrompt  string
 	inhibitionPrompt string
 	inbox            <-chan bus.Thought
 
@@ -30,17 +48,20 @@ type Server struct {
 	lastActive string
 }
 
-func New(client *ollama.Client, model string, b *bus.ThoughtBus, history *bus.History, lg *logger.Logger, systemPrompt, inhibitionPrompt string) *Server {
+func New(cfg ServerConfig) *Server {
 	s := &Server{
-		client:           client,
-		model:            model,
-		bus:              b,
-		history:          history,
-		logger:           lg,
-		systemPrompt:     systemPrompt,
-		inhibitionPrompt: inhibitionPrompt,
+		client:           cfg.Client,
+		model:            cfg.Model,
+		judgeModel:       cfg.JudgeModel,
+		bus:              cfg.Bus,
+		history:          cfg.History,
+		logger:           cfg.Logger,
+		chatPrompt:       cfg.ChatPrompt,
+		taskPrompt:       cfg.TaskPrompt,
+		modeJudgePrompt:  cfg.ModeJudgePrompt,
+		inhibitionPrompt: cfg.InhibitionPrompt,
 	}
-	s.inbox = b.Subscribe("chat")
+	s.inbox = cfg.Bus.Subscribe("chat")
 	return s
 }
 
@@ -99,13 +120,12 @@ func (s *Server) Run(ctx context.Context) {
 				continue
 			}
 
-			// ユーザーの質問を思考バスに流す
+			// ユーザーの質問を履歴に記録（バスへの配信は応答後）
 			userThought := bus.Thought{
 				From:    "user",
 				Content: input,
 			}
 			s.history.Record(userThought)
-			s.bus.Publish(userThought)
 
 			// スピナー表示しながら応答を待つ
 			done := make(chan string, 1)
@@ -114,6 +134,9 @@ func (s *Server) Run(ctx context.Context) {
 			}()
 
 			s.showSpinner(ctx, done)
+
+			// 応答完了後にユーザー入力をバスに流す（Ollama渋滞を防ぐ）
+			s.bus.Publish(userThought)
 		}
 	}
 }
@@ -149,23 +172,59 @@ func (s *Server) showSpinner(ctx context.Context, done <-chan string) {
 
 const maxRefineRounds = 2
 
+// judgeMode は軽量モデルでユーザー入力のモード（chat/task）を判定する
+func (s *Server) judgeMode(ctx context.Context, question string) string {
+	resp, err := s.client.Chat(ctx, ollama.ChatRequest{
+		Model: s.judgeModel,
+		Messages: []ollama.Message{
+			{Role: "system", Content: s.modeJudgePrompt},
+			{Role: "user", Content: question},
+		},
+	})
+	if err != nil {
+		s.logger.Error("judge", fmt.Sprintf("モード判定エラー: %v", err))
+		return "chat" // エラー時はchatモードにフォールバック
+	}
+	mode := strings.TrimSpace(strings.ToLower(resp.Message.Content))
+	if strings.Contains(mode, "task") {
+		return "task"
+	}
+	return "chat"
+}
+
 func (s *Server) respond(ctx context.Context, question string) string {
+	// モード判定（軽量モデルで高速に）
+	mode := s.judgeMode(ctx, question)
+	s.logger.Info("judge", fmt.Sprintf("モード: %s", mode))
+
+	systemPrompt := s.chatPrompt
+	if mode == "task" {
+		systemPrompt = s.taskPrompt
+	}
+
 	recent := s.history.Recent(10)
 
-	var thoughts strings.Builder
+	var thoughtList []string
 	for _, t := range recent {
 		if t.From == "user" || t.From == "system" {
 			continue
 		}
-		fmt.Fprintf(&thoughts, "%s\n", t.Content)
+		thoughtList = append(thoughtList, t.Content)
 	}
 
-	var basePrompt string
-	if thoughts.Len() > 0 {
-		basePrompt = fmt.Sprintf("【ユーザーの発言】\n%s\n\n【参考: 最近の内部思考】\n%s\n\n上記の内部思考は参考程度に。ユーザーの発言に直接答えることを最優先にして。", question, thoughts.String())
-	} else {
-		basePrompt = question
+	type brocaInput struct {
+		Question    string   `json:"question"`
+		Thoughts    []string `json:"thoughts,omitempty"`
+		Instruction string   `json:"instruction"`
 	}
+
+	input := brocaInput{
+		Question:    question,
+		Thoughts:    thoughtList,
+		Instruction: "questionに直接答えて。thoughtsは参考程度。",
+	}
+	baseJSON, _ := json.Marshal(input)
+	basePrompt := string(baseJSON)
 
 	var refined string
 	prompt := basePrompt
@@ -175,7 +234,7 @@ func (s *Server) respond(ctx context.Context, question string) string {
 		resp, err := s.client.Chat(ctx, ollama.ChatRequest{
 			Model: s.model,
 			Messages: []ollama.Message{
-				{Role: "system", Content: s.systemPrompt},
+				{Role: "system", Content: systemPrompt},
 				{Role: "user", Content: prompt},
 			},
 		})
@@ -212,7 +271,23 @@ func (s *Server) respond(ctx context.Context, question string) string {
 
 		// 差が大きい → 理由付きで差し戻し
 		s.logger.Info("inhibition", fmt.Sprintf("差し戻し(%d): 起案が大幅に整形された", i+1))
-		prompt = fmt.Sprintf("%s\n\n【前回の起案】\n%s\n【整形後】\n%s\n\n前回の起案は地の文や冗長な表現が多く、上記のように整形された。最初からこのレベルの簡潔さで書き直して。", basePrompt, draft, refined)
+
+		type remandInput struct {
+			Question    string   `json:"question"`
+			Thoughts    []string `json:"thoughts,omitempty"`
+			PrevDraft   string   `json:"prev_draft"`
+			Refined     string   `json:"refined"`
+			Instruction string   `json:"instruction"`
+		}
+		ri := remandInput{
+			Question:    question,
+			Thoughts:    thoughtList,
+			PrevDraft:   draft,
+			Refined:     refined,
+			Instruction: "prev_draftは冗長だったのでrefinedに整形された。最初からrefinedレベルの簡潔さでquestionに答えて。",
+		}
+		remandJSON, _ := json.Marshal(ri)
+		prompt = string(remandJSON)
 	}
 
 	return refined
