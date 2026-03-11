@@ -134,11 +134,32 @@ func main() {
 
 	lg.Info("system", "lmind起動")
 
+	// 前回の思考を復元（SQLiteから直近の思考を読み込み）
+	pastThoughts, err := lg.RecentThoughts(ctx, 20)
+	if err == nil && len(pastThoughts) > 0 {
+		for _, entry := range pastThoughts {
+			history.Restore(bus.Thought{
+				From:    entry.Region,
+				Content: entry.Message,
+			})
+		}
+		lg.Info("system", fmt.Sprintf("前回の思考を%d件復元", len(pastThoughts)))
+	}
+
 	// 初期思考を投入（思考のきっかけ）
-	thoughtBus.Publish(bus.Thought{
-		From:    "system",
-		Content: "システム起動。自由に思考を始めてください。",
-	})
+	if len(pastThoughts) == 0 {
+		// 初回起動時のみ種を投入
+		thoughtBus.Publish(bus.Thought{
+			From:    "frontal",
+			Content: "A quiet moment. What should I think about?",
+		})
+	} else {
+		// 前回の思考を引き継いで再開
+		thoughtBus.Publish(bus.Thought{
+			From:    "frontal",
+			Content: "Resuming from previous thoughts. What was I thinking about?",
+		})
+	}
 
 	// チャットインターフェースを起動（メインgoroutine）
 	chatServer := chat.New(chat.ServerConfig{

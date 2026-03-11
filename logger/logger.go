@@ -134,3 +134,30 @@ type LogEntry struct {
 	Level     string
 	Message   string
 }
+
+// RecentThoughts は脳部位の直近の思考ログを時系列順で取得する
+func (l *Logger) RecentThoughts(ctx context.Context, limit int) ([]LogEntry, error) {
+	rows, err := l.db.QueryContext(ctx, `
+		SELECT id, timestamp, region, level, message FROM logs
+		WHERE region IN ('frontal', 'temporal', 'hippocampus', 'user')
+		AND level = 'info'
+		ORDER BY timestamp DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []LogEntry
+	for rows.Next() {
+		var e LogEntry
+		if err := rows.Scan(&e.ID, &e.Timestamp, &e.Region, &e.Level, &e.Message); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	// 逆順にして時系列順にする
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	return entries, rows.Err()
+}

@@ -46,6 +46,9 @@ type Server struct {
 
 	mu         sync.Mutex
 	lastActive string
+
+	convMu      sync.Mutex
+	convHistory []string // ユーザー発言専用の会話履歴
 }
 
 func New(cfg ServerConfig) *Server {
@@ -127,13 +130,19 @@ func (s *Server) Run(ctx context.Context) {
 			}
 			s.history.Record(userThought)
 
+			// 会話専用履歴にユーザー発言を追加（思考バスとは独立）
+			s.addConvHistory("user: " + input)
+
 			// スピナー表示しながら応答を待つ
 			done := make(chan string, 1)
 			go func() {
 				done <- s.respond(ctx, input)
 			}()
 
-			s.showSpinner(ctx, done)
+			response := s.waitResponse(ctx, done)
+
+			// botの応答も会話履歴に追加
+			s.addConvHistory("bot: " + response)
 
 			// 応答完了後にユーザー入力をバスに流す（Ollama渋滞を防ぐ）
 			s.bus.Publish(userThought)
@@ -141,8 +150,8 @@ func (s *Server) Run(ctx context.Context) {
 	}
 }
 
-// showSpinner はLLM応答待ちの間、アクティブな脳部位名を切り替え表示する
-func (s *Server) showSpinner(ctx context.Context, done <-chan string) {
+// waitResponse はLLM応答待ちの間スピナーを表示し、応答テキストを返す
+func (s *Server) waitResponse(ctx context.Context, done <-chan string) string {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -151,10 +160,10 @@ func (s *Server) showSpinner(ctx context.Context, done <-chan string) {
 		select {
 		case <-ctx.Done():
 			fmt.Print("\r\033[K")
-			return
+			return ""
 		case response := <-done:
 			fmt.Printf("\r\033[K\n%s\n\n> ", response)
-			return
+			return response
 		case <-ticker.C:
 			s.mu.Lock()
 			active := s.lastActive
@@ -167,6 +176,16 @@ func (s *Server) showSpinner(ctx context.Context, done <-chan string) {
 			d := strings.Repeat(".", dots)
 			fmt.Printf("\r\033[K[%s] 考え中%s", active, d)
 		}
+	}
+}
+
+// addConvHistory は会話専用履歴にエントリを追加する
+func (s *Server) addConvHistory(entry string) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	s.convHistory = append(s.convHistory, entry)
+	if len(s.convHistory) > 20 {
+		s.convHistory = s.convHistory[1:]
 	}
 }
 
@@ -205,17 +224,18 @@ func (s *Server) respond(ctx context.Context, question string) string {
 	recent := s.history.Recent(10)
 
 	var thoughtList []string
-	var historyList []string
 	for _, t := range recent {
-		if t.From == "user" {
-			historyList = append(historyList, t.Content)
-			continue
-		}
-		if t.From == "system" {
+		if t.From == "user" || t.From == "system" {
 			continue
 		}
 		thoughtList = append(thoughtList, t.Content)
 	}
+
+	// 会話専用履歴から取得（思考バスに埋もれない）
+	s.convMu.Lock()
+	historyList := make([]string, len(s.convHistory))
+	copy(historyList, s.convHistory)
+	s.convMu.Unlock()
 
 	type brocaInput struct {
 		Question    string   `json:"question"`

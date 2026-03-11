@@ -101,6 +101,17 @@ func (h *History) Record(t Thought) {
 	h.compressOld()
 }
 
+// Restore は圧縮処理をスキップして思考を追加する（起動時の復元用）
+func (h *History) Restore(t Thought) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.thoughts = append(h.thoughts, t)
+	if len(h.thoughts) > h.maxSize {
+		h.thoughts = h.thoughts[1:]
+	}
+}
+
 // compressOld は直近freshCount件より古い未圧縮の思考を要約する
 // mu.Lockを取得した状態で呼ぶこと
 func (h *History) compressOld() {
