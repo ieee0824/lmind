@@ -192,12 +192,13 @@ func (b *Bonnou) wander() {
 	tmpl := bonnouTemplates[rand.Intn(len(bonnouTemplates))]
 	content := fmt.Sprintf(tmpl, best.word, association)
 
+	// 本流（bus）には流さず、履歴にのみ記録する（低優先度）
+	// 他モジュールは history 経由で思考ストリームに煩悩が混ざっているのを見る
 	thought := bus.Thought{
 		From:    "bonnou",
 		Content: content,
 	}
 	b.history.Record(thought)
-	b.bus.Publish(thought)
 	b.logger.Info("bonnou", fmt.Sprintf("煩悩発生 (trigger=%s, intensity=%.1f): %s", best.word, best.intensity, content))
 }
 

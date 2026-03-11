@@ -88,8 +88,8 @@ func (n *Novelty) evaluate(incoming bus.Thought) {
 	overlapRate := float64(overlap) / float64(len(incomingWords))
 	noveltyScore := 1.0 - overlapRate
 
-	// 新規性が高い場合のみ通知
-	if noveltyScore > 0.7 {
+	// 新規性が高い場合のみ通知（閾値厳しめ: user入力でも安易に1.00にしない）
+	if noveltyScore > 0.85 {
 		thought := bus.Thought{
 			From:    "novelty",
 			Content: fmt.Sprintf("Novel input detected (score: %.2f) from [%s]. New concepts worth exploring.", noveltyScore, incoming.From),
@@ -98,6 +98,23 @@ func (n *Novelty) evaluate(incoming bus.Thought) {
 		n.bus.Publish(thought)
 		n.logger.Info("novelty", fmt.Sprintf("新規性検出: %.2f from %s", noveltyScore, incoming.From))
 	}
+}
+
+// truncateToSentences はテキストを最大n文に切り詰める
+func truncateToSentences(text string, n int) string {
+	separators := []string{". ", "。", "! ", "? "}
+	count := 0
+	for i := 0; i < len(text); i++ {
+		for _, sep := range separators {
+			if i+len(sep) <= len(text) && text[i:i+len(sep)] == sep {
+				count++
+				if count >= n {
+					return strings.TrimSpace(text[:i+len(sep)])
+				}
+			}
+		}
+	}
+	return text
 }
 
 // tokenize は簡易トークナイザ。英語と日本語の両方に対応。

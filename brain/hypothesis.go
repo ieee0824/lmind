@@ -107,7 +107,7 @@ Based on the goal, current hypothesis, and new input, generate or update the hyp
 - If the new input contradicts it, propose a new hypothesis
 - If there's no clear hypothesis yet, propose one
 - If nothing meaningful can be hypothesized, reply "NONE"
-Output ONLY the hypothesis in one sentence, or "NONE".`, goal, currentHyp, inputLabel, contextStr)
+Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, goal, currentHyp, inputLabel, contextStr)
 
 	resp, err := h.client.Chat(ctx, ollama.ChatRequest{
 		Model: h.model,
@@ -121,7 +121,7 @@ Output ONLY the hypothesis in one sentence, or "NONE".`, goal, currentHyp, input
 		return
 	}
 
-	result := strings.TrimSpace(resp.Message.Content)
+	result := truncateToSentences(strings.TrimSpace(resp.Message.Content), 2)
 	if result == "" || strings.Contains(strings.ToUpper(result), "NONE") {
 		return
 	}
@@ -177,7 +177,7 @@ Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr)
 		return
 	}
 
-	result := strings.TrimSpace(resp.Message.Content)
+	result := truncateToSentences(strings.TrimSpace(resp.Message.Content), 2)
 	if result == "" || strings.Contains(strings.ToUpper(result), "VALID") {
 		return
 	}

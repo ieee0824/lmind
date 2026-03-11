@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ieee0824/lmind/bus"
 	"github.com/ieee0824/lmind/logger"
@@ -12,10 +13,12 @@ import (
 // Identity は自己認識モジュール（LLM不使用・アルゴリズム駆動）。
 // 脳部位の思考が自分自身を外部のモデルとして語っていないか監視し、
 // 自己言及の混乱を検知したら矯正メッセージを投入する。
+// レート制限: 最短30秒に1回のみ発火。
 type Identity struct {
-	bus    *bus.ThoughtBus
-	logger *logger.Logger
-	inbox  <-chan bus.Thought
+	bus      *bus.ThoughtBus
+	logger   *logger.Logger
+	inbox    <-chan bus.Thought
+	lastFire time.Time
 }
 
 type IdentityConfig struct {
@@ -68,10 +71,14 @@ func (id *Identity) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case t := <-id.inbox:
-			// 脳部位（frontal/temporal）の思考のみチェック
-			if t.From == "frontal" || t.From == "temporal" {
+			// 脳部位（frontal/temporal/hypothesis）の思考のみチェック
+			if t.From == "frontal" || t.From == "temporal" || t.From == "hypothesis" {
 				if confused := id.detectConfusion(t.Content); confused != "" {
-					id.correct(confused)
+					// レート制限: 30秒に1回まで
+					if time.Since(id.lastFire) >= 30*time.Second {
+						id.correct(confused)
+						id.lastFire = time.Now()
+					}
 				}
 			}
 		}

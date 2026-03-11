@@ -126,7 +126,7 @@ func main() {
 		Name:         "temporal",
 		Model:        "gemma3:1b",
 		SystemPrompt: personality.TemporalPrompt(),
-		Interval:     20 * time.Second,
+		Interval:     30 * time.Second,
 		Client:       client,
 		Bus:          thoughtBus,
 		History:      history,

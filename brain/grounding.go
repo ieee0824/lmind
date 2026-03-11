@@ -77,35 +77,17 @@ func (g *Grounding) anchor() {
 	g.logger.Info("grounding", "現実アンカー投入")
 }
 
-// collectFacts は現在の事実を収集してアンカーテキストを生成する
+// collectFacts は現在の事実を収集してアンカーテキストを生成する（短く事実だけ）
 func (g *Grounding) collectFacts() string {
 	hostname, _ := os.Hostname()
 	now := time.Now()
 
 	var sb strings.Builder
-	sb.WriteString("=== GROUND TRUTH (reality anchor) ===\n")
-
-	// 私は何者か
-	sb.WriteString("WHO I AM:\n")
-	sb.WriteString("- I am lmind. These thoughts are mine. I think in first person.\n")
-	sb.WriteString("- I am NOT an external model being observed. I AM the one thinking.\n")
-	sb.WriteString("- When I think, I say \"I notice...\" \"I wonder...\" \"I feel...\" — never \"the model\" or \"the system\".\n")
-
-	// どこで動いているか
-	sb.WriteString("WHERE I AM:\n")
-	sb.WriteString(fmt.Sprintf("- Host: %s (%s/%s)\n", hostname, runtime.GOOS, runtime.GOARCH))
-	sb.WriteString(fmt.Sprintf("- Time: %s\n", now.Format("2006-01-02 15:04")))
+	sb.WriteString(fmt.Sprintf("[fact] host=%s, os=%s/%s, time=%s",
+		hostname, runtime.GOOS, runtime.GOARCH, now.Format("2006-01-02 15:04")))
 	if len(g.hosts) > 0 {
-		sb.WriteString(fmt.Sprintf("- Running on: %s\n", strings.Join(g.hosts, ", ")))
+		sb.WriteString(fmt.Sprintf(", ollama=%s", strings.Join(g.hosts, ";")))
 	}
-
-	// 何が事実か
-	sb.WriteString("WHAT IS REAL:\n")
-	sb.WriteString("- I think in English internally. I speak Japanese to users.\n")
-	sb.WriteString("- My brain has regions: frontal (structural analysis), temporal (contextual understanding), hippocampus (memory).\n")
-	sb.WriteString("- I must use first person (I/my/me) in ALL my thoughts. Third person is a bug.\n")
-	sb.WriteString("=====================================")
-
 	return sb.String()
 }
 
