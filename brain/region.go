@@ -123,7 +123,7 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 
 	thought := bus.Thought{
 		From:    r.Name,
-		Content: resp.Message.Content,
+		Content: rewriteFirstPerson(resp.Message.Content),
 	}
 	r.history.Record(thought)
 	r.bus.Publish(thought)
@@ -165,10 +165,37 @@ func (r *Region) think(ctx context.Context) {
 
 	thought := bus.Thought{
 		From:    r.Name,
-		Content: content,
+		Content: rewriteFirstPerson(content),
 	}
 	r.history.Record(thought)
 	r.bus.Publish(thought)
+}
+
+// rewriteFirstPerson は三人称表現を一人称に置換する（軽量テキスト処理、LLM不使用）
+func rewriteFirstPerson(text string) string {
+	replacements := []struct{ old, new string }{
+		{"The system ", "I "},
+		{"the system ", "I "},
+		{"The system's ", "My "},
+		{"the system's ", "my "},
+		{"The model ", "I "},
+		{"the model ", "I "},
+		{"The model's ", "My "},
+		{"the model's ", "my "},
+		{"This model ", "I "},
+		{"this model ", "I "},
+		{"The AI ", "I "},
+		{"the AI ", "I "},
+		{"It is ", "I am "},
+		{"it is ", "I am "},
+		{"Its ", "My "},
+		{"its ", "my "},
+	}
+	result := text
+	for _, r := range replacements {
+		result = strings.ReplaceAll(result, r.old, r.new)
+	}
+	return result
 }
 
 func formatThoughts(thoughts []bus.Thought) string {

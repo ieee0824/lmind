@@ -126,6 +126,15 @@ Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, go
 		return
 	}
 
+	// 直近の仮説と類似なら捨てる（堂々巡り防止）
+	_, currentHyp2 := h.state.Snapshot()
+	if currentHyp2 != "" {
+		sim := jaccardSimilarity(tokenize(result), tokenize(currentHyp2))
+		if sim > 0.6 {
+			return
+		}
+	}
+
 	// stateのhypothesisを更新
 	h.state.SetHypothesis(result)
 
@@ -180,6 +189,15 @@ Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr)
 	result := truncateToSentences(strings.TrimSpace(resp.Message.Content), 2)
 	if result == "" || strings.Contains(strings.ToUpper(result), "VALID") {
 		return
+	}
+
+	// 直近の仮説と類似なら捨てる
+	_, prevHyp := h.state.Snapshot()
+	if prevHyp != "" {
+		sim := jaccardSimilarity(tokenize(result), tokenize(prevHyp))
+		if sim > 0.6 {
+			return
+		}
 	}
 
 	h.state.SetHypothesis(result)

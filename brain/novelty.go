@@ -44,10 +44,10 @@ func (n *Novelty) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case t := <-n.inbox:
-			if t.From == "novelty" || t.From == "critic" || t.From == "curiosity" {
-				continue // メタモジュール同士の反応を防ぐ
+			// 外部入力（user/broca）のみ評価。内部モジュール出力は無視。
+			if t.From == "user" || t.From == "broca" {
+				n.evaluate(t)
 			}
-			n.evaluate(t)
 		}
 	}
 }

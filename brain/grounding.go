@@ -41,27 +41,19 @@ func NewGrounding(cfg GroundingConfig) *Grounding {
 	return g
 }
 
-// Run は現実アンカーループを開始する
+// Run は現実アンカーループを開始する（混乱検知時のみ発火）
 func (g *Grounding) Run(ctx context.Context) {
-	g.logger.Info("grounding", "現実アンカーモジュール開始")
-
-	// 起動直後に一度アンカーを投入
-	g.anchor()
-
-	ticker := time.NewTicker(g.interval)
-	defer ticker.Stop()
+	g.logger.Info("grounding", "現実アンカーモジュール開始（イベント駆動）")
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case t := <-g.inbox:
-			// 混乱を検知したら即座にアンカー投入
+			// 混乱を検知した時だけアンカー投入（定期投入はしない）
 			if (t.From == "frontal" || t.From == "temporal" || t.From == "hypothesis") && g.isConfused(t.Content) {
 				g.anchor()
 			}
-		case <-ticker.C:
-			g.anchor()
 		}
 	}
 }
