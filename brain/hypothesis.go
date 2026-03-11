@@ -15,35 +15,38 @@ import (
 // 前頭葉（構造分析）と側頭葉（状況理解）の出力を受けて、
 // 現在のgoalに対する仮説を生成・更新する。
 type Hypothesis struct {
-	model    string
-	client   *ollama.Client
-	bus      *bus.ThoughtBus
-	history  *bus.History
-	logger   *logger.Logger
-	state    *State
-	inbox    <-chan bus.Thought
-	interval time.Duration
+	model      string
+	client     *ollama.Client
+	bus        *bus.ThoughtBus
+	history    *bus.History
+	logger     *logger.Logger
+	state      *State
+	modulation *Modulation
+	inbox      <-chan bus.Thought
+	interval   time.Duration
 }
 
 type HypothesisConfig struct {
-	Model    string
-	Client   *ollama.Client
-	Bus      *bus.ThoughtBus
-	History  *bus.History
-	Logger   *logger.Logger
-	State    *State
-	Interval time.Duration
+	Model      string
+	Client     *ollama.Client
+	Bus        *bus.ThoughtBus
+	History    *bus.History
+	Logger     *logger.Logger
+	State      *State
+	Modulation *Modulation
+	Interval   time.Duration
 }
 
 func NewHypothesis(cfg HypothesisConfig) *Hypothesis {
 	h := &Hypothesis{
-		model:    cfg.Model,
-		client:   cfg.Client,
-		bus:      cfg.Bus,
-		history:  cfg.History,
-		logger:   cfg.Logger,
-		state:    cfg.State,
-		interval: cfg.Interval,
+		model:      cfg.Model,
+		client:     cfg.Client,
+		bus:        cfg.Bus,
+		history:    cfg.History,
+		logger:     cfg.Logger,
+		state:      cfg.State,
+		modulation: cfg.Modulation,
+		interval:   cfg.Interval,
 	}
 	h.inbox = cfg.Bus.Subscribe("hypothesis")
 	return h
@@ -66,6 +69,10 @@ func (h *Hypothesis) Run(ctx context.Context) {
 				h.generate(ctx, t)
 			}
 		case <-ticker.C:
+			if h.modulation != nil && h.modulation.ShouldSkip("hypothesis") {
+				h.logger.Info("hypothesis", fmt.Sprintf("ゲイン低下によりスキップ (gain=%.1f)", h.modulation.Gain("hypothesis")))
+				continue
+			}
 			// 定期的にも仮説を見直す
 			h.review(ctx)
 		}

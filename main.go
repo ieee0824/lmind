@@ -94,6 +94,9 @@ func main() {
 	// 明示的な内部状態（goal/hypothesis）
 	mindState := brain.NewState()
 
+	// モジュールゲイン管理（ループ時に動的調整）
+	modulation := brain.NewModulation()
+
 	// State更新モジュール（ユーザー入力→goal、前頭葉→hypothesis）
 	stateUpdater := brain.NewStateUpdater(brain.StateUpdaterConfig{
 		State:   mindState,
@@ -115,6 +118,7 @@ func main() {
 		History:      history,
 		Logger:       lg,
 		State:        mindState,
+		Modulation:   modulation,
 	})
 
 	// 側頭葉: 連想・記憶想起・パターン認識を担当（軽いモデル）
@@ -128,6 +132,7 @@ func main() {
 		History:      history,
 		Logger:       lg,
 		State:        mindState,
+		Modulation:   modulation,
 	})
 
 	// 海馬: 記憶の形成・想起を担当（memAI-go使用）
@@ -151,9 +156,10 @@ func main() {
 		Client:   client,
 		Bus:      thoughtBus,
 		History:  history,
-		Logger:   lg,
-		State:    mindState,
-		Interval: 35 * time.Second,
+		Logger:     lg,
+		State:      mindState,
+		Modulation: modulation,
+		Interval:   35 * time.Second,
 	})
 
 	// 予測モジュール: ユーザーの次の発言を予測
@@ -194,6 +200,13 @@ func main() {
 		Interval: 40 * time.Second,
 		Hosts:    client.Hosts(),
 	})
+	modulatorMod := brain.NewModulator(brain.ModulatorConfig{
+		Modulation: modulation,
+		Bus:        thoughtBus,
+		History:    history,
+		Logger:     lg,
+		Interval:   30 * time.Second,
+	})
 
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
@@ -207,6 +220,7 @@ func main() {
 	go criticMod.Run(ctx)
 	go curiosityMod.Run(ctx)
 	go groundingMod.Run(ctx)
+	go modulatorMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 

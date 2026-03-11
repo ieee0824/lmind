@@ -18,12 +18,13 @@ type Region struct {
 	SystemPrompt string
 	Interval     time.Duration
 
-	client  *ollama.Client
-	bus     *bus.ThoughtBus
-	history *bus.History
-	logger  *logger.Logger
-	state   *State
-	inbox   <-chan bus.Thought
+	client     *ollama.Client
+	bus        *bus.ThoughtBus
+	history    *bus.History
+	logger     *logger.Logger
+	state      *State
+	modulation *Modulation
+	inbox      <-chan bus.Thought
 }
 
 type RegionConfig struct {
@@ -36,6 +37,7 @@ type RegionConfig struct {
 	History      *bus.History
 	Logger       *logger.Logger
 	State        *State
+	Modulation   *Modulation
 }
 
 func NewRegion(cfg RegionConfig) *Region {
@@ -49,6 +51,7 @@ func NewRegion(cfg RegionConfig) *Region {
 		history:      cfg.History,
 		logger:       cfg.Logger,
 		state:        cfg.State,
+		modulation:   cfg.Modulation,
 	}
 	r.inbox = cfg.Bus.Subscribe(cfg.Name)
 	return r
@@ -72,6 +75,10 @@ func (r *Region) Run(ctx context.Context) {
 			r.process(ctx, thought)
 
 		case <-ticker.C:
+			if r.modulation != nil && r.modulation.ShouldSkip(r.Name) {
+				r.logger.Info(r.Name, fmt.Sprintf("ゲイン低下によりスキップ (gain=%.1f)", r.modulation.Gain(r.Name)))
+				continue
+			}
 			r.logger.Info(r.Name, "自律思考中...")
 			r.think(ctx)
 		}
