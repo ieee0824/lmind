@@ -205,8 +205,13 @@ func (s *Server) respond(ctx context.Context, question string) string {
 	recent := s.history.Recent(10)
 
 	var thoughtList []string
+	var historyList []string
 	for _, t := range recent {
-		if t.From == "user" || t.From == "system" {
+		if t.From == "user" {
+			historyList = append(historyList, t.Content)
+			continue
+		}
+		if t.From == "system" {
 			continue
 		}
 		thoughtList = append(thoughtList, t.Content)
@@ -214,14 +219,16 @@ func (s *Server) respond(ctx context.Context, question string) string {
 
 	type brocaInput struct {
 		Question    string   `json:"question"`
+		History     []string `json:"history,omitempty"`
 		Thoughts    []string `json:"thoughts,omitempty"`
 		Instruction string   `json:"instruction"`
 	}
 
 	input := brocaInput{
 		Question:    question,
+		History:     historyList,
 		Thoughts:    thoughtList,
-		Instruction: "questionに直接答えて。thoughtsは参考程度。",
+		Instruction: "questionに直接答えて。historyは直近の会話履歴。thoughtsは参考程度。",
 	}
 	baseJSON, _ := json.Marshal(input)
 	basePrompt := string(baseJSON)

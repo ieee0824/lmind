@@ -59,7 +59,7 @@ func main() {
 		resp, err := client.Chat(ctx, ollama.ChatRequest{
 			Model: "gemma3:1b",
 			Messages: []ollama.Message{
-				{Role: "system", Content: "与えられたテキストを1文に要約してください。要約だけを出力。"},
+				{Role: "system", Content: "Summarize the given text in one sentence. Output only the summary."},
 				{Role: "user", Content: content},
 			},
 		})

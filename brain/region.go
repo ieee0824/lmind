@@ -80,7 +80,7 @@ func (r *Region) process(ctx context.Context, incoming bus.Thought) {
 	recent := r.history.Recent(10)
 	contextStr := formatThoughts(recent)
 
-	prompt := fmt.Sprintf("他の脳部位「%s」からの入力:\n%s\n\n最近の思考の流れ:\n%s\n\nこの入力を踏まえて、あなたの役割の観点から考えを述べてください。簡潔に。",
+	prompt := fmt.Sprintf("Input from brain region [%s]:\n%s\n\nRecent thought stream:\n%s\n\nBased on this input, provide your analysis from your role's perspective. Be concise.",
 		incoming.From, incoming.Content, contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
@@ -113,7 +113,7 @@ func (r *Region) think(ctx context.Context) {
 
 	contextStr := formatThoughts(recent)
 
-	prompt := fmt.Sprintf("最近の思考の流れ:\n%s\n\nこれらを踏まえて、あなたの役割の観点から新しい考えや気づきがあれば述べてください。なければ「特になし」と答えてください。簡潔に。",
+	prompt := fmt.Sprintf("Recent thought stream:\n%s\n\nBased on these, share any new insights or observations from your role's perspective. If none, reply \"nothing\". Be concise.",
 		contextStr)
 
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
@@ -129,7 +129,7 @@ func (r *Region) think(ctx context.Context) {
 	}
 
 	content := resp.Message.Content
-	if strings.Contains(content, "特になし") {
+	if strings.Contains(strings.ToLower(content), "nothing") {
 		return
 	}
 
