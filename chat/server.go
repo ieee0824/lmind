@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -185,14 +186,24 @@ func (s *Server) respond(ctx context.Context, question string) string {
 		draft := resp.Message.Content
 		s.logger.Info("broca", fmt.Sprintf("起案(%d): %s", i+1, draft))
 
-		// 前頭葉の抑制機能：要約＋地の文除去＋整形
-		var err2 error
-		refined, err2 = s.refine(ctx, question, draft)
-		if err2 != nil {
-			s.logger.Error("inhibition", fmt.Sprintf("整形エラー: %v", err2))
-			return draft
+		// Step 1: コードで地の文・装飾を機械的に除去
+		stripped := stripNarrative(draft)
+		s.logger.Info("inhibition", fmt.Sprintf("除去後(%d): %s", i+1, stripped))
+
+		// Step 2: LLMで要約（長すぎる場合のみ）
+		if len([]rune(stripped)) > 150 {
+			var err2 error
+			refined, err2 = s.refine(ctx, question, stripped)
+			if err2 != nil {
+				s.logger.Error("inhibition", fmt.Sprintf("要約エラー: %v", err2))
+				refined = stripped
+			} else {
+				refined = stripNarrative(refined) // 要約結果にも地の文が入る可能性があるので再除去
+			}
+		} else {
+			refined = stripped
 		}
-		s.logger.Info("inhibition", fmt.Sprintf("整形後(%d): %s", i+1, refined))
+		s.logger.Info("inhibition", fmt.Sprintf("最終(%d): %s", i+1, refined))
 
 		// 起案と整形後の差が小さければ収束とみなす
 		if s.isSimilarLength(draft, refined) {
@@ -232,7 +243,40 @@ func (s *Server) refine(ctx context.Context, question, draft string) (string, er
 	if err != nil {
 		return "", err
 	}
-	return resp.Message.Content, nil
+	return stripNarrative(resp.Message.Content), nil
+}
+
+// 地の文除去の正規表現パターン（コンパイル済み）
+var narrativePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`（[^）]*）`),                // 全角括弧（心情・ト書き）
+	regexp.MustCompile(`\([^)]*\)`),                // 半角括弧
+	regexp.MustCompile(`\*[^*]+\*`),                // *動作*
+	regexp.MustCompile(`(?m)^[\s　]*[「」][\s　]*$`), // 空のかぎかっこ行
+	regexp.MustCompile(`…+[\s　]*$`),               // 行末の余韻「…」だけの行
+	regexp.MustCompile(`[\*＊]`),                    // 残ったアスタリスク
+	regexp.MustCompile(`(?m)^[\s　]*\*\s+.*$`),     // マークダウンリスト（* item）
+	regexp.MustCompile(`「|」`),                     // かぎかっこ除去
+}
+
+// stripNarrative はLLM出力から地の文・ト書き・装飾を機械的に除去する
+func stripNarrative(text string) string {
+	result := text
+	for _, re := range narrativePatterns {
+		result = re.ReplaceAllString(result, "")
+	}
+
+	// 空行の整理と各行のトリム
+	lines := strings.Split(result, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		cleaned = append(cleaned, trimmed)
+	}
+
+	return strings.Join(cleaned, "\n")
 }
 
 func (s *Server) showThoughts() {
