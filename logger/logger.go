@@ -162,12 +162,17 @@ func (l *Logger) LoadState(key string) string {
 	return value
 }
 
-// RecentThoughts は脳部位の直近の思考ログを時系列順で取得する
+// RecentThoughts は直近の会話ログを時系列順で取得する。
+// 復元対象はユーザー入力とBroca応答（実際の会話）のみ。
+// 内部思考（frontal/temporal/hypothesis）は復元しない
+// （前回セッションの解釈バイアスを引き継がないため）。
 func (l *Logger) RecentThoughts(ctx context.Context, limit int) ([]LogEntry, error) {
 	rows, err := l.db.QueryContext(ctx, `
 		SELECT id, timestamp, region, level, message FROM logs
-		WHERE region IN ('frontal', 'temporal', 'hippocampus', 'user')
+		WHERE region IN ('user', 'broca')
 		AND level = 'info'
+		AND message NOT LIKE '起案%'
+		AND message NOT LIKE 'I said to the user:%'
 		ORDER BY timestamp DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err

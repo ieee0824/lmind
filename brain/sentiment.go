@@ -133,27 +133,32 @@ var anxietyKeywords = []string{
 }
 
 // sentimentScore はテキストのセンチメントスコアを返す（-1.0〜+1.0）
-// キーワードベースの高速判定。LLM不使用。
+// 部分文字列マッチで判定。日本語はスペース分割できないため、
+// テキスト内にキーワードが含まれているかを直接チェックする。LLM不使用。
 func sentimentScore(text string) float64 {
 	lower := strings.ToLower(text)
-	words := strings.Fields(lower)
 
 	var pos, neg float64
-	for _, w := range words {
-		if score, ok := positiveWords[w]; ok {
+	matchCount := 0
+
+	for keyword, score := range positiveWords {
+		if strings.Contains(lower, keyword) {
 			pos += score
+			matchCount++
 		}
-		if score, ok := negativeWords[w]; ok {
+	}
+	for keyword, score := range negativeWords {
+		if strings.Contains(lower, keyword) {
 			neg += score
+			matchCount++
 		}
 	}
 
-	total := pos + neg
-	if total == 0 {
+	if matchCount == 0 {
 		return 0
 	}
 	// -1.0〜+1.0にクランプ
-	score := (pos - neg) / float64(len(words))
+	score := (pos - neg) / float64(matchCount)
 	if score > 1.0 {
 		return 1.0
 	}
