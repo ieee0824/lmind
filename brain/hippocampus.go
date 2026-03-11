@@ -115,17 +115,18 @@ func (h *Hippocampus) process(ctx context.Context, incoming bus.Thought) {
 		h.logger.Error(h.Name, fmt.Sprintf("LTM保存エラー: %v", err))
 	}
 
-	// LTMから関連記憶を検索（embedding非対応モデルの場合はスキップ）
+	// LTMから関連記憶を検索
 	results, err := h.ltm.Search(ctx, memai.SearchQuery{
 		Query:              content,
 		EmotionalIntensity: emotion.Intensity,
 	})
 	if err != nil {
-		// embedding非対応等で検索できない場合はSTMのみで動作を継続
+		h.logger.Error(h.Name, fmt.Sprintf("LTM検索エラー: %v", err))
 		return
 	}
+	h.logger.Info(h.Name, fmt.Sprintf("LTM検索: %d件ヒット (保存済み: %d件)", len(results), h.memoryCount(ctx)))
 
-	// 関連記憶があれば想起として思考バスに流す
+	// 関連記憶があれば想起として思考バスに流す（自分自身を除く）
 	if len(results) > 1 {
 		recall := h.formatRecall(results, emotion)
 		if recall != "" {
@@ -151,6 +152,14 @@ func (h *Hippocampus) consolidate(ctx context.Context) {
 	// STMをdecayさせる（空メッセージでupdate）
 	h.turn++
 	h.stm.Update(h.turn, "", &memai.EmotionalState{Primary: memai.EmotionNeutral})
+}
+
+func (h *Hippocampus) memoryCount(ctx context.Context) int {
+	mems, err := h.store.GetMemories(ctx)
+	if err != nil {
+		return -1
+	}
+	return len(mems)
 }
 
 func (h *Hippocampus) saveLTM(ctx context.Context, t bus.Thought, emotion *memai.EmotionalState) error {

@@ -12,17 +12,24 @@ import (
 )
 
 // State は思考の明示的な内部状態。
-// goal（今何を目指しているか）とhypothesis（現在の仮説・理解）を保持する。
+// goal（今何を目指しているか）、hypothesis（現在の仮説・理解）、
+// prediction（ユーザーの次の発言予測）を保持する。
 type State struct {
 	mu         sync.RWMutex
 	goal       string // 現在の目標・関心事
 	hypothesis string // 現在の仮説・理解
+	prediction string // ユーザーの次の発言予測
+	identity   string // 自己認識
 }
+
+const defaultIdentity = "I am lmind, a thinking system. These thoughts are my own internal process. I am not observing an external model — I AM the one thinking."
 
 func NewState() *State {
 	return &State{
 		goal:       "No specific goal. Freely exploring thoughts.",
 		hypothesis: "",
+		prediction: "",
+		identity:   defaultIdentity,
 	}
 }
 
@@ -31,6 +38,19 @@ func (s *State) Snapshot() (goal, hypothesis string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.goal, s.hypothesis
+}
+
+// Prediction は現在の予測を返す
+func (s *State) Prediction() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.prediction
+}
+
+func (s *State) SetPrediction(prediction string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prediction = prediction
 }
 
 func (s *State) SetGoal(goal string) {
@@ -47,12 +67,25 @@ func (s *State) SetHypothesis(hypothesis string) {
 
 // Format はプロンプトに注入するための文字列を生成する
 func (s *State) Format() string {
-	goal, hyp := s.Snapshot()
+	s.mu.RLock()
+	goal := s.goal
+	hyp := s.hypothesis
+	pred := s.prediction
+	s.mu.RUnlock()
+
+	s.mu.RLock()
+	identity := s.identity
+	s.mu.RUnlock()
+
 	var sb strings.Builder
 	sb.WriteString("=== Current State ===\n")
+	sb.WriteString(fmt.Sprintf("Identity: %s\n", identity))
 	sb.WriteString(fmt.Sprintf("Goal: %s\n", goal))
 	if hyp != "" {
 		sb.WriteString(fmt.Sprintf("Hypothesis: %s\n", hyp))
+	}
+	if pred != "" {
+		sb.WriteString(fmt.Sprintf("Predicted next user input: %s\n", pred))
 	}
 	sb.WriteString("=====================")
 	return sb.String()

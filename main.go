@@ -156,7 +156,21 @@ func main() {
 		Interval: 35 * time.Second,
 	})
 
+	// 予測モジュール: ユーザーの次の発言を予測
+	predictionMod := brain.NewPrediction(brain.PredictionConfig{
+		Model:   "gemma3:1b",
+		Client:  client,
+		Bus:     thoughtBus,
+		History: history,
+		Logger:  lg,
+		State:   mindState,
+	})
+
 	// メタモジュール（LLM不使用・アルゴリズム駆動）
+	identityMod := brain.NewIdentity(brain.IdentityConfig{
+		Bus:    thoughtBus,
+		Logger: lg,
+	})
 	noveltyMod := brain.NewNovelty(brain.NoveltyConfig{
 		Bus:     thoughtBus,
 		History: history,
@@ -180,7 +194,9 @@ func main() {
 	go frontal.Run(ctx)
 	go temporal.Run(ctx)
 	go hypothesisMod.Run(ctx)
+	go predictionMod.Run(ctx)
 	go hippocampus.Run(ctx)
+	go identityMod.Run(ctx)
 	go noveltyMod.Run(ctx)
 	go criticMod.Run(ctx)
 	go curiosityMod.Run(ctx)

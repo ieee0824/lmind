@@ -8,18 +8,24 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+type hostEntry struct {
+	url    string
+	weight int // 重み（大きいほど優先）
+}
+
 type Client struct {
-	hosts      []string
+	hosts      []hostEntry
 	httpClient *http.Client
 	debug      bool
 
-	// ホストごとの実行中リクエスト数（least-connections用）
+	// ホストごとの実行中リクエスト数（weighted least-connections用）
 	inflight []atomic.Int64
 	// ホストごとの累計リクエスト数
 	totalReqs []atomic.Int64
@@ -40,15 +46,29 @@ type ChatResponse struct {
 	Message Message `json:"message"`
 }
 
+// parseHost は "http://host:port*weight" 形式をパースする。
+// 重み省略時はデフォルト1。
+func parseHost(raw string) hostEntry {
+	raw = strings.TrimSpace(raw)
+	if idx := strings.LastIndex(raw, "*"); idx > 0 {
+		url := raw[:idx]
+		if w, err := strconv.Atoi(raw[idx+1:]); err == nil && w > 0 {
+			return hostEntry{url: url, weight: w}
+		}
+	}
+	return hostEntry{url: raw, weight: 1}
+}
+
 // New はOllamaクライアントを作成する。
 // OLLAMA_HOSTS 環境変数にカンマ区切りで複数ホストを指定すると
-// least-connections方式で分散する（実行中リクエストが最も少ないホストに振る）。
-// 例: OLLAMA_HOSTS=http://localhost:11434,http://192.168.50.47:11434
+// weighted least-connections方式で分散する。
+// 重み指定: http://host:port*3 （省略時は1）
+// 例: OLLAMA_HOSTS=http://localhost:11434*3,http://192.168.50.47:11434*1
 func New(baseURL string) *Client {
-	var hosts []string
+	var hosts []hostEntry
 
 	if baseURL != "" {
-		hosts = []string{baseURL}
+		hosts = []hostEntry{parseHost(baseURL)}
 	}
 
 	if len(hosts) == 0 {
@@ -56,7 +76,7 @@ func New(baseURL string) *Client {
 			for _, h := range strings.Split(env, ",") {
 				h = strings.TrimSpace(h)
 				if h != "" {
-					hosts = append(hosts, h)
+					hosts = append(hosts, parseHost(h))
 				}
 			}
 		}
@@ -64,12 +84,12 @@ func New(baseURL string) *Client {
 
 	if len(hosts) == 0 {
 		if env := os.Getenv("OLLAMA_HOST"); env != "" {
-			hosts = []string{env}
+			hosts = []hostEntry{parseHost(env)}
 		}
 	}
 
 	if len(hosts) == 0 {
-		hosts = []string{"http://localhost:11434"}
+		hosts = []hostEntry{{url: "http://localhost:11434", weight: 1}}
 	}
 
 	return &Client{
@@ -85,15 +105,24 @@ func New(baseURL string) *Client {
 
 // Hosts は接続先のホスト一覧を返す
 func (c *Client) Hosts() []string {
-	return c.hosts
+	result := make([]string, len(c.hosts))
+	for i, h := range c.hosts {
+		if h.weight != 1 {
+			result[i] = fmt.Sprintf("%s*%d", h.url, h.weight)
+		} else {
+			result[i] = h.url
+		}
+	}
+	return result
 }
 
 // Stats はホストごとのリクエスト統計を返す
 func (c *Client) Stats() []HostStats {
 	stats := make([]HostStats, len(c.hosts))
-	for i, host := range c.hosts {
+	for i, h := range c.hosts {
 		stats[i] = HostStats{
-			Host:     host,
+			Host:     h.url,
+			Weight:   h.weight,
 			Inflight: c.inflight[i].Load(),
 			Total:    c.totalReqs[i].Load(),
 		}
@@ -103,23 +132,27 @@ func (c *Client) Stats() []HostStats {
 
 type HostStats struct {
 	Host     string
+	Weight   int
 	Inflight int64
 	Total    int64
 }
 
-// leastLoadedHosts はinflight数が少ない順にホストインデックスを返す
+// leastLoadedHosts はweighted inflight（inflight/weight）が少ない順にホストインデックスを返す
 func (c *Client) leastLoadedHosts() []int {
 	type hostLoad struct {
-		index    int
-		inflight int64
+		index        int
+		weightedLoad float64 // inflight / weight（小さいほど空いている）
 	}
 	loads := make([]hostLoad, len(c.hosts))
 	for i := range c.hosts {
-		loads[i] = hostLoad{index: i, inflight: c.inflight[i].Load()}
+		loads[i] = hostLoad{
+			index:        i,
+			weightedLoad: float64(c.inflight[i].Load()) / float64(c.hosts[i].weight),
+		}
 	}
-	// 安定ソート: inflight少ない順
+	// 安定ソート: weighted load少ない順
 	for i := 1; i < len(loads); i++ {
-		for j := i; j > 0 && loads[j].inflight < loads[j-1].inflight; j-- {
+		for j := i; j > 0 && loads[j].weightedLoad < loads[j-1].weightedLoad; j-- {
 			loads[j], loads[j-1] = loads[j-1], loads[j]
 		}
 	}
@@ -131,11 +164,11 @@ func (c *Client) leastLoadedHosts() []int {
 }
 
 // doPost はPOSTリクエストを送信し、失敗時に別ホストへフォールバックする。
-// least-connections方式: 実行中リクエストが最も少ないホストを優先する。
+// weighted least-connections方式: inflight/weightが最も小さいホストを優先する。
 func (c *Client) doPost(ctx context.Context, path string, body []byte) ([]byte, error) {
 	var lastErr error
 	for _, idx := range c.leastLoadedHosts() {
-		host := c.hosts[idx]
+		host := c.hosts[idx].url
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, host+path, bytes.NewReader(body))
 		if err != nil {
@@ -167,8 +200,8 @@ func (c *Client) doPost(ctx context.Context, path string, body []byte) ([]byte, 
 		}
 
 		if c.debug && len(c.hosts) > 1 {
-			fmt.Fprintf(os.Stderr, "[ollama] %s → %s (inflight: %d, total: %d)\n",
-				path, host, c.inflight[idx].Load(), c.totalReqs[idx].Load())
+			fmt.Fprintf(os.Stderr, "[ollama] %s → %s (w=%d, inflight: %d, total: %d)\n",
+				path, host, c.hosts[idx].weight, c.inflight[idx].Load(), c.totalReqs[idx].Load())
 		}
 
 		return respBody, nil
@@ -240,7 +273,7 @@ func (c *Client) StatsReporter(ctx context.Context, interval time.Duration, wg *
 			case <-ticker.C:
 				var parts []string
 				for _, s := range c.Stats() {
-					parts = append(parts, fmt.Sprintf("%s(inflight=%d, total=%d)", s.Host, s.Inflight, s.Total))
+					parts = append(parts, fmt.Sprintf("%s(w=%d, inflight=%d, total=%d)", s.Host, s.Weight, s.Inflight, s.Total))
 				}
 				fmt.Fprintf(os.Stderr, "[ollama-stats] %s\n", strings.Join(parts, " | "))
 			}
