@@ -16,24 +16,28 @@ import (
 
 // Server はCLIベースのチャットインターフェース
 type Server struct {
-	client  *ollama.Client
-	model   string
-	bus     *bus.ThoughtBus
-	history *bus.History
-	logger  *logger.Logger
-	inbox   <-chan bus.Thought
+	client           *ollama.Client
+	model            string
+	bus              *bus.ThoughtBus
+	history          *bus.History
+	logger           *logger.Logger
+	systemPrompt     string
+	inhibitionPrompt string
+	inbox            <-chan bus.Thought
 
 	mu         sync.Mutex
-	lastActive string // 最後にバスで発言した部位名
+	lastActive string
 }
 
-func New(client *ollama.Client, model string, b *bus.ThoughtBus, history *bus.History, lg *logger.Logger) *Server {
+func New(client *ollama.Client, model string, b *bus.ThoughtBus, history *bus.History, lg *logger.Logger, systemPrompt, inhibitionPrompt string) *Server {
 	s := &Server{
-		client:  client,
-		model:   model,
-		bus:     b,
-		history: history,
-		logger:  lg,
+		client:           client,
+		model:            model,
+		bus:              b,
+		history:          history,
+		logger:           lg,
+		systemPrompt:     systemPrompt,
+		inhibitionPrompt: inhibitionPrompt,
 	}
 	s.inbox = b.Subscribe("chat")
 	return s
@@ -142,18 +146,10 @@ func (s *Server) showSpinner(ctx context.Context, done <-chan string) {
 	}
 }
 
-const brocaSystemPrompt = `あなたはブローカ野（言語出力部位）です。
-あなたの内部では複数の思考プロセスが常に動いています。それらの思考は以下の「内部思考」として与えられます。
-
-あなたの役割：
-- 内部思考を統合し、一つの意識・人格として自然に応答すること
-- 部位名（frontal, temporal, hippocampus等）やシステム用語は絶対に出力しないこと
-- 「私の内部では〜」「脳部位が〜」のようなメタ的な説明はしないこと
-- あたかも一人の人間が考えて答えているかのように振る舞うこと
-- 内部思考に有用な情報がなければ、自分の知識で普通に答えること`
+const maxRefineRounds = 2
 
 func (s *Server) respond(ctx context.Context, question string) string {
-	recent := s.history.Recent(20)
+	recent := s.history.Recent(10)
 
 	var thoughts strings.Builder
 	for _, t := range recent {
@@ -163,26 +159,80 @@ func (s *Server) respond(ctx context.Context, question string) string {
 		fmt.Fprintf(&thoughts, "%s\n", t.Content)
 	}
 
-	var prompt string
+	var basePrompt string
 	if thoughts.Len() > 0 {
-		prompt = fmt.Sprintf("【内部思考】\n%s\n【ユーザーの発言】\n%s", thoughts.String(), question)
+		basePrompt = fmt.Sprintf("【ユーザーの発言】\n%s\n\n【参考: 最近の内部思考】\n%s\n\n上記の内部思考は参考程度に。ユーザーの発言に直接答えることを最優先にして。", question, thoughts.String())
 	} else {
-		prompt = question
+		basePrompt = question
 	}
 
+	var refined string
+	prompt := basePrompt
+
+	for i := range maxRefineRounds {
+		// Broca起案
+		resp, err := s.client.Chat(ctx, ollama.ChatRequest{
+			Model: s.model,
+			Messages: []ollama.Message{
+				{Role: "system", Content: s.systemPrompt},
+				{Role: "user", Content: prompt},
+			},
+		})
+		if err != nil {
+			s.logger.Error("broca", fmt.Sprintf("応答エラー: %v", err))
+			return fmt.Sprintf("エラー: %v", err)
+		}
+		draft := resp.Message.Content
+		s.logger.Info("broca", fmt.Sprintf("起案(%d): %s", i+1, draft))
+
+		// 前頭葉の抑制機能：要約＋地の文除去＋整形
+		var err2 error
+		refined, err2 = s.refine(ctx, question, draft)
+		if err2 != nil {
+			s.logger.Error("inhibition", fmt.Sprintf("整形エラー: %v", err2))
+			return draft
+		}
+		s.logger.Info("inhibition", fmt.Sprintf("整形後(%d): %s", i+1, refined))
+
+		// 起案と整形後の差が小さければ収束とみなす
+		if s.isSimilarLength(draft, refined) {
+			break
+		}
+
+		// 差が大きい → 理由付きで差し戻し
+		s.logger.Info("inhibition", fmt.Sprintf("差し戻し(%d): 起案が大幅に整形された", i+1))
+		prompt = fmt.Sprintf("%s\n\n【前回の起案】\n%s\n【整形後】\n%s\n\n前回の起案は地の文や冗長な表現が多く、上記のように整形された。最初からこのレベルの簡潔さで書き直して。", basePrompt, draft, refined)
+	}
+
+	return refined
+}
+
+// isSimilarLength は起案と整形後の長さが近いかを判定する
+// 整形で半分以下に縮んだら「大幅に違う」とみなす
+func (s *Server) isSimilarLength(draft, refined string) bool {
+	dl := len([]rune(draft))
+	rl := len([]rune(refined))
+	if dl == 0 {
+		return true
+	}
+	return float64(rl)/float64(dl) > 0.5
+}
+
+// refine は前頭葉の抑制機能としてドラフトを整形する（地の文除去・要約）
+// question を渡すことで、ユーザーの質問から離れた整形を防ぐ
+func (s *Server) refine(ctx context.Context, question, draft string) (string, error) {
+	prompt := fmt.Sprintf("【ユーザーの発言】\n%s\n\n【返答案】\n%s", question, draft)
 	resp, err := s.client.Chat(ctx, ollama.ChatRequest{
 		Model: s.model,
 		Messages: []ollama.Message{
-			{Role: "system", Content: brocaSystemPrompt},
+			{Role: "system", Content: s.inhibitionPrompt},
 			{Role: "user", Content: prompt},
 		},
 	})
 	if err != nil {
-		s.logger.Error("broca", fmt.Sprintf("応答エラー: %v", err))
-		return fmt.Sprintf("エラー: %v", err)
+		return "", err
 	}
-
-	return resp.Message.Content
+	return resp.Message.Content, nil
 }
 
 func (s *Server) showThoughts() {
