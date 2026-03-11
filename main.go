@@ -54,6 +54,26 @@ func main() {
 	thoughtBus := bus.New()
 	history := bus.NewHistory(100)
 
+	// 古い思考の要約関数を設定（gemma3:1bで軽量に）
+	history.SetSummarizer(func(content string) string {
+		resp, err := client.Chat(ctx, ollama.ChatRequest{
+			Model: "gemma3:1b",
+			Messages: []ollama.Message{
+				{Role: "system", Content: "与えられたテキストを1文に要約してください。要約だけを出力。"},
+				{Role: "user", Content: content},
+			},
+		})
+		if err != nil {
+			// エラー時はフォールバック: 80文字切り詰め
+			runes := []rune(content)
+			if len(runes) > 80 {
+				return string(runes[:80]) + "…"
+			}
+			return content
+		}
+		return resp.Message.Content
+	})
+
 	// 思考バスの全メッセージを履歴に記録 + SQLiteに永続化
 	recorder := thoughtBus.Subscribe("_recorder")
 	go func() {

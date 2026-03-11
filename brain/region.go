@@ -147,7 +147,11 @@ func formatThoughts(thoughts []bus.Thought) string {
 	}
 	var sb strings.Builder
 	for _, t := range thoughts {
-		fmt.Fprintf(&sb, "[%s] %s\n", t.From, t.Content)
+		content := t.Content
+		if t.Summary != "" {
+			content = t.Summary
+		}
+		fmt.Fprintf(&sb, "[%s] %s\n", t.From, content)
 	}
 	return sb.String()
 }

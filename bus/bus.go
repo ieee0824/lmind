@@ -10,6 +10,7 @@ type Thought struct {
 	From      string    // 発信元の脳部位
 	To        string    // 宛先（空なら全部位へブロードキャスト）
 	Content   string    // 思考の内容
+	Summary   string    // 圧縮済みの要約（空なら未圧縮）
 	CreatedAt time.Time // 生成時刻
 }
 
@@ -59,19 +60,32 @@ func (b *ThoughtBus) Publish(t Thought) {
 	}
 }
 
+// SummarizeFunc は思考を1行に要約する関数の型
+type SummarizeFunc func(content string) string
+
 // History は直近の思考を取得する（Chat I/Fでの文脈表示用）
-// 注: 簡易実装。必要なら別途リングバッファを追加
+// freshCount件より古い思考は自動的に要約される
 type History struct {
-	mu       sync.Mutex
-	thoughts []Thought
-	maxSize  int
+	mu          sync.Mutex
+	thoughts    []Thought
+	maxSize     int
+	freshCount  int           // 全文保持する直近件数
+	summarizeFn SummarizeFunc // 要約関数（nilなら切り詰め）
 }
 
 func NewHistory(maxSize int) *History {
 	return &History{
-		thoughts: make([]Thought, 0, maxSize),
-		maxSize:  maxSize,
+		thoughts:   make([]Thought, 0, maxSize),
+		maxSize:    maxSize,
+		freshCount: 3,
 	}
+}
+
+// SetSummarizer は要約関数を設定する
+func (h *History) SetSummarizer(fn SummarizeFunc) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.summarizeFn = fn
 }
 
 func (h *History) Record(t Thought) {
@@ -81,6 +95,34 @@ func (h *History) Record(t Thought) {
 	h.thoughts = append(h.thoughts, t)
 	if len(h.thoughts) > h.maxSize {
 		h.thoughts = h.thoughts[1:]
+	}
+
+	// freshCount境界を超えた思考を圧縮
+	h.compressOld()
+}
+
+// compressOld は直近freshCount件より古い未圧縮の思考を要約する
+// mu.Lockを取得した状態で呼ぶこと
+func (h *History) compressOld() {
+	if len(h.thoughts) <= h.freshCount {
+		return
+	}
+	boundary := len(h.thoughts) - h.freshCount
+	for i := 0; i < boundary; i++ {
+		if h.thoughts[i].Summary != "" {
+			continue // 要約済み
+		}
+		if h.summarizeFn != nil {
+			h.thoughts[i].Summary = h.summarizeFn(h.thoughts[i].Content)
+		} else {
+			// フォールバック: 先頭80文字で切り詰め
+			runes := []rune(h.thoughts[i].Content)
+			if len(runes) > 80 {
+				h.thoughts[i].Summary = string(runes[:80]) + "…"
+			} else {
+				h.thoughts[i].Summary = h.thoughts[i].Content
+			}
+		}
 	}
 }
 
