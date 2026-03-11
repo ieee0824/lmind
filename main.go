@@ -127,10 +127,32 @@ func main() {
 		Interval: 25 * time.Second,
 	})
 
+	// メタモジュール（LLM不使用・アルゴリズム駆動）
+	noveltyMod := brain.NewNovelty(brain.NoveltyConfig{
+		Bus:     thoughtBus,
+		History: history,
+		Logger:  lg,
+	})
+	criticMod := brain.NewCritic(brain.CriticConfig{
+		Bus:      thoughtBus,
+		History:  history,
+		Logger:   lg,
+		Interval: 45 * time.Second,
+	})
+	curiosityMod := brain.NewCuriosity(brain.CuriosityConfig{
+		Bus:      thoughtBus,
+		History:  history,
+		Logger:   lg,
+		Interval: 60 * time.Second,
+	})
+
 	// 脳部位の思考ループを開始
 	go frontal.Run(ctx)
 	go temporal.Run(ctx)
 	go hippocampus.Run(ctx)
+	go noveltyMod.Run(ctx)
+	go criticMod.Run(ctx)
+	go curiosityMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 
