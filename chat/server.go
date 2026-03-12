@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ieee0824/lmind/brain"
 	"github.com/ieee0824/lmind/bus"
+	"github.com/ieee0824/lmind/config"
 	"github.com/ieee0824/lmind/logger"
 	"github.com/ieee0824/lmind/ollama"
 )
@@ -28,6 +30,8 @@ type ServerConfig struct {
 	TaskPrompt       string // 秘書モード用
 	ModeJudgePrompt  string // モード判定用
 	InhibitionPrompt string
+	Metrics          *brain.Metrics
+	Params           *config.Params
 }
 
 // Server はCLIベースのチャットインターフェース
@@ -42,7 +46,9 @@ type Server struct {
 	taskPrompt       string
 	modeJudgePrompt  string
 	inhibitionPrompt string
-	inbox <-chan bus.Thought
+	metrics          *brain.Metrics
+	params           *config.Params
+	inbox            <-chan bus.Thought
 
 	mu         sync.Mutex
 	lastActive string
@@ -63,6 +69,8 @@ func New(cfg ServerConfig) *Server {
 		taskPrompt:       cfg.TaskPrompt,
 		modeJudgePrompt:  cfg.ModeJudgePrompt,
 		inhibitionPrompt: cfg.InhibitionPrompt,
+		metrics:          cfg.Metrics,
+		params:           cfg.Params,
 	}
 	s.inbox = cfg.Bus.Subscribe("chat")
 	return s

@@ -292,6 +292,10 @@ func main() {
 		UserBonus:         params.Attention.UserBonus,
 	})
 
+	// メトリクス収集
+	metrics := brain.NewMetrics(thoughtBus, history)
+	go metrics.Run(ctx.Done())
+
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
 	go frontal.Run(ctx)
@@ -351,6 +355,8 @@ func main() {
 		TaskPrompt:       personality.BrocaTaskPrompt(),
 		ModeJudgePrompt:  personality.ModeJudgePrompt(),
 		InhibitionPrompt: personality.InhibitionPrompt(),
+		Metrics:          metrics,
+		Params:           params,
 	})
 	if *apiAddr != "" {
 		// Web APIモード

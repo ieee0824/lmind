@@ -36,6 +36,8 @@ func (s *Server) RunAPI(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/thoughts", s.handleThoughts)
+	mux.HandleFunc("GET /api/metrics", s.handleMetrics)
+	mux.HandleFunc("GET /api/params", s.handleParams)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	// ctxキャンセル時にgraceful shutdown
@@ -104,5 +106,23 @@ func (s *Server) handleThoughts(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entries)
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.metrics == nil {
+		http.Error(w, `{"error":"metrics not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.metrics.Snapshot())
+}
+
+func (s *Server) handleParams(w http.ResponseWriter, r *http.Request) {
+	if s.params == nil {
+		http.Error(w, `{"error":"params not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.params)
 }
 
