@@ -9,58 +9,52 @@
 
 ## アーキテクチャ
 
-```
-┌──────────┐  ┌──────────┐  ┌────────────┐  ┌────────────┐
-│ frontal  │←→│ temporal  │←→│hippocampus │←→│ hypothesis │
-│ 前頭葉   │  │ 側頭葉    │  │ 海馬       │  │ 仮説生成   │
-│ gemma3:4b│  │ gemma3:1b │  │ gemma3:1b  │  │ gemma3:4b  │
-│ 構造分析 │  │ 状況理解  │  │ 記憶/想起  │  │ 仮説生成   │
-└────┬─────┘  └─────┬─────┘  └─────┬──────┘  └─────┬──────┘
-     │              │              │              │
-     └──────────────┼──────────────┼──────────────┘
-                    │              │
-            ┌───────▼───────┐     │
-            │  思考バス      │←────┘  階層的圧縮: 直近3件は全文、
-            │ (Go channels) │        古い思考はLLMで1文要約
-            └───────┬───────┘
-                    │
-  ┌─────────┐ ┌─────────┐ ┌───────────┐
-  │ novelty │ │ critic  │ │ curiosity │  ← メタモジュール
-  │ 新規性  │ │ 自己評価│ │ 探索      │    LLM不使用
-  └─────────┘ └─────────┘ └───────────┘    アルゴリズム駆動
-                    │
-  ┌──────────┐ ┌───────────┐ ┌───────────┐
-  │ identity │ │ grounding │ │ sentiment │  ← 自己認識・感情
-  │ 混乱検知 │ │ 現実固定  │ │ 感情ゲート│    LLM不使用
-  └──────────┘ └───────────┘ └───────────┘    アルゴリズム駆動
-                    │
-  ┌────────────────┐ ┌───────────┐ ┌──────────┐
-  │prediction_error│ │ attention │ │ rapport  │  ← 予測誤差・注意・親密度
-  │ 仮説ドロップ   │ │ サリエンス│ │ 親密度   │    LLM不使用
-  └────────────────┘ └───────────┘ └──────────┘    アルゴリズム駆動
-                    │
-         ┌──────────▼──────────┐
-         │  State (goal/hyp)   │  ← ユーザー入力→goal更新
-         └──────────┬──────────┘    仮説モジュール→hypothesis更新
-                    │
-            ┌───────▼───────┐
-            │ モード判定     │  ← gemma3:1b で高速分類
-            │ chat / task   │
-            └───────┬───────┘
-                    │
-            ┌───────▼───────┐
-            │  Broca 野     │  ← JSON構造化入力（question/history/thoughts）
-            │  (言語出力)    │
-            └───────┬───────┘
-                    │
-            ┌───────▼───────┐
-            │  抑制ゲート    │  ← コード: 地の文除去
-            │  code + LLM   │     LLM: 要約（長い場合のみ）
-            └───────┬───────┘     差が大きければ差し戻し（最大2回）
-                    │
-            ┌───────▼───────┐
-            │   Chat I/F    │
-            └───────────────┘
+```mermaid
+graph TD
+    subgraph LLM思考ループ
+        frontal["frontal<br/>前頭葉 · gemma3:4b<br/>構造分析"]
+        temporal["temporal<br/>側頭葉 · gemma3:1b<br/>状況理解"]
+        hippocampus["hippocampus<br/>海馬 · gemma3:1b<br/>記憶/想起"]
+        hypothesis["hypothesis<br/>仮説生成 · gemma3:4b"]
+    end
+
+    frontal <--> bus
+    temporal <--> bus
+    hippocampus <--> bus
+    hypothesis <--> bus
+
+    bus["思考バス<br/>(Go channels)<br/>直近3件は全文、古い思考はLLM要約"]
+
+    subgraph メタモジュール（LLM不使用）
+        novelty["novelty<br/>新規性検知"]
+        critic["critic<br/>自己評価"]
+        curiosity["curiosity<br/>探索促進"]
+    end
+
+    subgraph 自己認識・感情（LLM不使用）
+        identity["identity<br/>混乱検知"]
+        grounding["grounding<br/>現実固定"]
+        sentiment["sentiment<br/>感情ゲート"]
+    end
+
+    subgraph 予測・注意（LLM不使用）
+        prediction_error["prediction_error<br/>予測誤差 → 仮説ドロップ"]
+        attention["attention<br/>サリエンスフィルタ"]
+    end
+
+    bus --> novelty & critic & curiosity
+    bus --> identity & grounding & sentiment
+    bus --> prediction_error & attention
+    novelty & critic & curiosity --> bus
+    identity & grounding & sentiment --> bus
+    prediction_error & attention --> bus
+
+    bus --> state["State<br/>goal / hypothesis"]
+    state --> mode["モード判定<br/>gemma3:1b<br/>chat / task"]
+    mode --> broca["Broca野<br/>言語出力"]
+    broca --> inhibition["抑制ゲート<br/>地の文除去 + LLM要約"]
+    inhibition --> chat["Chat I/F<br/>CLI / Web API"]
+    chat -. "ユーザー入力" .-> bus
 ```
 
 各脳部位はgoroutineで独立に動作し、思考バス経由で中間情報（＝思考）を交換し続ける。
@@ -113,22 +107,7 @@ LLMを使わず、純粋なアルゴリズムで思考の質を制御するモ�
 - **sentiment（感情ゲート）** — ユーザー入力の感情極性を部分文字列マッチ（日英対応、日本語はスペース分割不可のためContains判定）で高速判定し、結果をStateとバスに反映。ポジティブ入力時はtemporalのゲインを下げ（物語生成の抑制）、frontalを上げ（文脈解釈の強化）、anxiety固定された仮説をクリアする。全モジュールのプロンプトに感情文脈が注入され、temporalが「pattern completion」モード（不安ナラティブへの吸収）に陥るのを防ぐ
 - **prediction_error（予測誤差）** — ユーザー入力時に前回の予測（prediction）と実際の入力をJaccard距離で比較。高誤差(>0.8)なら仮説をドロップして思考をリセット、中誤差(>0.5)なら再評価シグナルを発信。「同じ仮説の言い換え」ループ（narrative attractor）を破壊し、探索を促す
 - **attention（サリエンス）** — 内部思考（frontal/temporal/hypothesis）のサリエンス（重要度）をスコアリング。goalとの関連性(+)、直近思考との重複度(-)、メタ自己言及キーワード(-)、ユーザー言及(+)で判定。低サリエンス(<0.3)の思考を検知したら「ユーザーの発言に集中せよ」とバスに通知
-- **rapport（親密度）** — ユーザーの同意・共感・肯定を検出してスコア(0.0〜1.0)を上昇させ、否定・拒絶で下降させるアルゴリズム駆動モジュール。日英混合のキーワードマッチングで変動を判定し、1回の入力あたり±0.05に制限して急変を防ぐ。スコアはSQLiteに永続化され、セッション間で引き継がれる。初期値0.3（警戒）
-
 これにより思考ループが同じテーマを堂々巡りするのを防ぎ、自律的に多様な方向へ展開する。
-
-### ラポート（親密度）システム
-
-ユーザーとの関係性に応じてBroca野の人格表現を動的に変化させる：
-
-| レベル | スコア | 口調の変化 |
-|--------|--------|-----------|
-| guarded | 0.0〜0.4 | 丁寧め・警戒・踏み込まない |
-| neutral | 0.4〜0.6 | 普通の距離感 |
-| friendly | 0.6〜0.8 | リラックス・軽口・くだけた語尾 |
-| intimate | 0.8〜1.0 | 素に近い・照れ・本音・距離感ゼロ |
-
-ラポートスコアはBroca野のシステムプロンプトにリアルタイムで注入され、同じ人格設定でも親密度によって表現が変わる。
 
 ### 内部メタ情報と外部入力の分離
 
@@ -248,7 +227,6 @@ State のうち goal のみSQLiteに永続化される。hypothesis はセッシ
 |---------------|---------|------|
 | `/api/chat` | POST | メッセージ送信・応答取得 |
 | `/api/thoughts` | GET | 直近の思考一覧 |
-| `/api/rapport` | GET | ラポートスコア・レベル |
 
 ```bash
 # チャット
@@ -261,7 +239,4 @@ curl -s -X POST http://localhost:8080/api/chat \
 curl -s http://localhost:8080/api/thoughts
 # => [{"from":"frontal","content":"...","created_at":"15:04:05"}, ...]
 
-# ラポート
-curl -s http://localhost:8080/api/rapport
-# => {"score": 0.35, "level": "guarded"}
 ```

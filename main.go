@@ -235,12 +235,6 @@ func main() {
 		Logger:  lg,
 		State:   mindState,
 	})
-	rapportMod := brain.NewRapport(brain.RapportConfig{
-		Bus:    thoughtBus,
-		Logger: lg,
-		Store:  lg,
-	})
-
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
 	go frontal.Run(ctx)
@@ -258,7 +252,7 @@ func main() {
 	go sentimentMod.Run(ctx)
 	go predictionErrorMod.Run(ctx)
 	go attentionMod.Run(ctx)
-	go rapportMod.Run(ctx)
+
 
 	lg.Info("system", "lmind起動")
 
@@ -301,7 +295,6 @@ func main() {
 		TaskPrompt:       personality.BrocaTaskPrompt(),
 		ModeJudgePrompt:  personality.ModeJudgePrompt(),
 		InhibitionPrompt: personality.InhibitionPrompt(),
-		Rapport:          rapportMod,
 	})
 	if *apiAddr != "" {
 		// Web APIモード

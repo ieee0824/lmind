@@ -28,12 +28,6 @@ type ThoughtEntry struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// RapportResponse はrapport APIのレスポンス用
-type RapportResponse struct {
-	Score float64 `json:"score"`
-	Level string  `json:"level"`
-}
-
 // RunAPI はHTTPサーバーとしてAPIを起動する（CLIの代替）
 // ctxがキャンセルされるとgraceful shutdownする。
 func (s *Server) RunAPI(ctx context.Context, addr string) error {
@@ -42,10 +36,6 @@ func (s *Server) RunAPI(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/thoughts", s.handleThoughts)
-	if s.rapport != nil {
-		mux.HandleFunc("GET /api/rapport", s.handleRapport)
-	}
-
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	// ctxキャンセル時にgraceful shutdown
@@ -116,11 +106,3 @@ func (s *Server) handleThoughts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(entries)
 }
 
-func (s *Server) handleRapport(w http.ResponseWriter, r *http.Request) {
-	resp := RapportResponse{
-		Score: s.rapport.Score(),
-		Level: s.rapport.Level(),
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
