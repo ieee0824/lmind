@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ieee0824/lmind/ga"
+	"github.com/ieee0824/lmind/ollama"
 )
 
 // Result は世代ごとの結果
@@ -83,6 +84,9 @@ func main() {
 	fmt.Printf("ベースポート: %d, バイナリ: %s\n", *basePort, bin)
 	fmt.Printf("一時ディレクトリ: %s\n\n", baseDir)
 
+	// embed用Ollamaクライアント（村間交流のセマンティック距離計算用）
+	ollamaClient := ollama.New("")
+
 	var results []Result
 
 	// 初期集団生成
@@ -114,7 +118,7 @@ func main() {
 		inds := pop.Individuals
 		topo := ga.NewTopology(inds, *villageSize, *rounds, *interRounds, *interRate)
 		fmt.Printf("対話中 (%d村)...\n", len(topo.Villages))
-		if err := topo.RunConversations(ctx, *seed); err != nil {
+		if err := topo.RunConversations(ctx, *seed, ollamaClient); err != nil {
 			fmt.Fprintf(os.Stderr, "  対話エラー: %v\n", err)
 		}
 

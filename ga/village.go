@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+
+	"github.com/ieee0824/lmind/ollama"
 )
+
+// OddballRate は「変わったやつ」の発生確率（村間交流のうち遠い村を選ぶ割合）
+const OddballRate = 0.2
 
 // Village は個体の社会的グループ
 type Village struct {
@@ -63,7 +68,8 @@ func NewTopology(inds []*Individual, villageSize int, intraRounds, interRounds i
 }
 
 // RunConversations は村内の密な対話と村間の緩やかな交流を実行する
-func (t *Topology) RunConversations(ctx context.Context, seed string) error {
+// ollamaClient が非nilの場合、embed距離ベースで村間交流を最適化する
+func (t *Topology) RunConversations(ctx context.Context, seed string, ollamaClient ...*ollama.Client) error {
 	// Phase 1: 村内の密な対話（総当たり、並列）
 	fmt.Printf("  村内対話 (%d村, %d往復)...\n", len(t.Villages), t.IntraRounds)
 	var wg sync.WaitGroup
@@ -93,19 +99,40 @@ func (t *Topology) RunConversations(ctx context.Context, seed string) error {
 		}
 	}
 
-	// Phase 2: 村間の緩やかな交流
+	// Phase 2: 村間の交流
 	if len(t.Villages) < 2 {
 		return nil
 	}
 
-	interPairs := t.interVillagePairs()
+	var interPairs [][2]*Individual
+
+	// Ollamaクライアントがあればセマンティック距離ベースの交流
+	var client *ollama.Client
+	if len(ollamaClient) > 0 && ollamaClient[0] != nil {
+		client = ollamaClient[0]
+	}
+
+	if client != nil {
+		fmt.Println("  村のembedding計算中...")
+		vecs, err := EmbedVillages(ctx, client, t.Villages)
+		if err == nil {
+			interPairs = semanticInterPairs(t.Villages, vecs, t.InterRate)
+		} else {
+			fmt.Printf("    embed失敗、ランダムにフォールバック: %v\n", err)
+		}
+	}
+
+	// セマンティック交流が得られなかった場合はランダム
+	if interPairs == nil {
+		interPairs = t.randomInterPairs()
+	}
+
 	if len(interPairs) == 0 {
 		return nil
 	}
 
 	fmt.Printf("  村間交流 (%d組, %d往復)...\n", len(interPairs), t.InterRounds)
 	for _, pair := range interPairs {
-		fmt.Printf("    %s <-> %s (村間)\n", pair[0].ID, pair[1].ID)
 		wg.Add(1)
 		go func(a, b *Individual) {
 			defer wg.Done()
@@ -127,8 +154,8 @@ func (t *Topology) RunConversations(ctx context.Context, seed string) error {
 	return nil
 }
 
-// interVillagePairs は隣接する村から代表者を1人ずつ選んでペアにする
-func (t *Topology) interVillagePairs() [][2]*Individual {
+// randomInterPairs は隣接する村から代表者を1人ずつ選んでペアにする（ランダム版）
+func (t *Topology) randomInterPairs() [][2]*Individual {
 	var pairs [][2]*Individual
 	for i := 0; i+1 < len(t.Villages); i++ {
 		if rand.Float64() > t.InterRate {
