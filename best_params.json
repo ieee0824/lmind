@@ -1,0 +1,64 @@
+{
+  "intervals": {
+    "frontal": 60,
+    "temporal": 60.60815000173081,
+    "hippocampus": 65.88091163098231,
+    "hypothesis": 60,
+    "critic": 60,
+    "curiosity": 60,
+    "grounding": 60,
+    "bonnou": 70.96869018029051,
+    "modulator": 69.1453267675474
+  },
+  "gain": {
+    "skip_threshold": 0.20382018720034156,
+    "max_gain": 1.8473466466430017,
+    "idle_decay_start": 10,
+    "recover_step": 0.02403553150073899,
+    "decay_step": 0.01
+  },
+  "stagnation": {
+    "decay_frontal": 0.33440709629218285,
+    "decay_temporal": 0.21957005106157015,
+    "decay_hypothesis": 0.34449700751071793,
+    "boost_curiosity": 0.05,
+    "boost_grounding": 0.22071026060497964,
+    "novelty_recovery": 0.12692719517500065
+  },
+  "hypothesis": {
+    "dedup_jaccard": 0.7723012904554931,
+    "sentiment_positive": 0.6899987173693439,
+    "sentiment_negative": -0.45013136788706154
+  },
+  "prediction_error": {
+    "high_threshold": 0.913562680609072,
+    "medium_threshold": 0.47401644059585135
+  },
+  "attention": {
+    "salience_threshold": 0.15614660244029957,
+    "baseline": 0.2758230108058119,
+    "goal_weight": 0.36488532122158207,
+    "repetition_penalty": 0.3789422231827932,
+    "meta_penalty": 0.05,
+    "user_bonus": 0.05
+  },
+  "critic": {
+    "repetition_jaccard": 0.4830491826916997,
+    "stagnation_rep_rate": 0.5430233495153995,
+    "stagnation_dominance": 0.3
+  },
+  "curiosity": {
+    "frequent_threshold": 6,
+    "rare_threshold": 1
+  },
+  "novelty": {
+    "score_threshold": 0.8945364706759934
+  },
+  "bonnou": {
+    "hot_word_retention": 196.40442720450747,
+    "intensity_threshold": 0.5032228182448825
+  },
+  "history": {
+    "fresh_count": 3
+  }
+}

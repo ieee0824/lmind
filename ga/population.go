@@ -199,16 +199,16 @@ func mutateParams(p *config.Params, rate float64) {
 		return int(nv)
 	}
 
-	// Intervals (5〜120秒)
-	p.Intervals.Frontal = perturb(p.Intervals.Frontal, 5, 120)
-	p.Intervals.Temporal = perturb(p.Intervals.Temporal, 5, 120)
-	p.Intervals.Hippocampus = perturb(p.Intervals.Hippocampus, 5, 120)
-	p.Intervals.Hypothesis = perturb(p.Intervals.Hypothesis, 5, 120)
-	p.Intervals.Critic = perturb(p.Intervals.Critic, 10, 120)
-	p.Intervals.Curiosity = perturb(p.Intervals.Curiosity, 10, 120)
-	p.Intervals.Grounding = perturb(p.Intervals.Grounding, 10, 120)
-	p.Intervals.Bonnou = perturb(p.Intervals.Bonnou, 10, 120)
-	p.Intervals.Modulator = perturb(p.Intervals.Modulator, 10, 120)
+	// Intervals (60〜180秒 — GA評価時はOllama負荷を抑えるため下限を高く)
+	p.Intervals.Frontal = perturb(p.Intervals.Frontal, 60, 180)
+	p.Intervals.Temporal = perturb(p.Intervals.Temporal, 60, 180)
+	p.Intervals.Hippocampus = perturb(p.Intervals.Hippocampus, 60, 180)
+	p.Intervals.Hypothesis = perturb(p.Intervals.Hypothesis, 60, 180)
+	p.Intervals.Critic = perturb(p.Intervals.Critic, 60, 180)
+	p.Intervals.Curiosity = perturb(p.Intervals.Curiosity, 60, 180)
+	p.Intervals.Grounding = perturb(p.Intervals.Grounding, 60, 180)
+	p.Intervals.Bonnou = perturb(p.Intervals.Bonnou, 60, 180)
+	p.Intervals.Modulator = perturb(p.Intervals.Modulator, 60, 180)
 
 	// Gain
 	p.Gain.SkipThreshold = perturb(p.Gain.SkipThreshold, 0.05, 0.8)

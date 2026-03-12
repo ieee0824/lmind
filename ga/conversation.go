@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // chatRequest はlmind /api/chat のリクエスト
@@ -52,7 +53,10 @@ func sendChat(ctx context.Context, port int, message string) (string, error) {
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	chatCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(chatCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
