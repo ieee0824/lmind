@@ -24,11 +24,12 @@ type Hippocampus struct {
 	history  *bus.History
 	logger   *logger.Logger
 	inbox    <-chan bus.Thought
-	stm      *memai.STM
-	ltm      *memai.LTM[int64]
-	store    memai.MemoryStore[int64]
-	analyzer memai.EmotionAnalyzer
-	turn     int
+	stm       *memai.STM
+	ltm       *memai.LTM[int64]
+	store     memai.MemoryStore[int64]
+	embedding memai.EmbeddingFunc
+	analyzer  memai.EmotionAnalyzer
+	turn      int
 }
 
 type HippocampusConfig struct {
@@ -51,10 +52,11 @@ func NewHippocampus(cfg HippocampusConfig) *Hippocampus {
 		bus:      cfg.Bus,
 		history:  cfg.History,
 		logger:   cfg.Logger,
-		stm:      memai.NewSTM(memai.DefaultSTMConfig()),
-		ltm:      memai.NewLTM(cfg.Store, cfg.EmbeddingFn, memai.DefaultLTMConfig()),
-		store:    cfg.Store,
-		analyzer: memai.NewKeywordEmotionAnalyzer(memai.LangJapanese),
+		stm:       memai.NewSTM(memai.DefaultSTMConfig()),
+		ltm:       memai.NewLTM(cfg.Store, cfg.EmbeddingFn, memai.DefaultLTMConfig()),
+		store:     cfg.Store,
+		embedding: cfg.EmbeddingFn,
+		analyzer:  memai.NewKeywordEmotionAnalyzer(memai.LangJapanese),
 	}
 	h.inbox = cfg.Bus.Subscribe(h.Name)
 	return h
@@ -110,14 +112,23 @@ func (h *Hippocampus) process(ctx context.Context, incoming bus.Thought) {
 		Emotional:    emotion.Intensity > 0.3,
 	})
 
-	// LTMに保存
-	if err := h.saveLTM(ctx, incoming, emotion); err != nil {
-		h.logger.Error(h.Name, fmt.Sprintf("LTM保存エラー: %v", err))
+	// embeddingを1回だけ計算して保存と検索で共有する
+	emb, err := h.embedding(ctx, content)
+	if err != nil {
+		h.logger.Error(h.Name, fmt.Sprintf("LTM embedding生成エラー: %v", err))
 	}
 
-	// LTMから関連記憶を検索
+	// LTMに非同期保存（思考ループをブロックしない）
+	go func() {
+		if saveErr := h.saveLTM(ctx, incoming, emotion, emb); saveErr != nil {
+			h.logger.Error(h.Name, fmt.Sprintf("LTM保存エラー: %v", saveErr))
+		}
+	}()
+
+	// LTMから関連記憶を検索（事前計算済みembeddingを使い回す）
 	results, err := h.ltm.Search(ctx, memai.SearchQuery{
 		Query:              content,
+		QueryEmbedding:     emb,
 		EmotionalIntensity: emotion.Intensity,
 	})
 	if err != nil {
@@ -162,9 +173,10 @@ func (h *Hippocampus) memoryCount(ctx context.Context) int {
 	return len(mems)
 }
 
-func (h *Hippocampus) saveLTM(ctx context.Context, t bus.Thought, emotion *memai.EmotionalState) error {
+func (h *Hippocampus) saveLTM(ctx context.Context, t bus.Thought, emotion *memai.EmotionalState, emb []float64) error {
 	mem := &memai.Memory[int64]{
 		Content:            t.Content,
+		Embedding:          emb,
 		ThreadKey:          t.From,
 		EventDate:          time.Now().Format("2006-01-02"),
 		EmotionalIntensity: emotion.Intensity,

@@ -16,7 +16,7 @@ graph TD
     subgraph llm_loop["LLM思考ループ"]
         frontal["frontal<br/>前頭葉 · gemma3:4b<br/>構造分析"]
         temporal["temporal<br/>側頭葉 · gemma3:1b<br/>状況理解"]
-        hippocampus["hippocampus<br/>海馬 · gemma3:1b<br/>記憶/想起"]
+        hippocampus["hippocampus<br/>海馬 · gemma3:1b<br/>記憶/想起(LTM+STM)"]
         hypothesis["hypothesis<br/>仮説生成 · gemma3:4b"]
     end
 
@@ -136,6 +136,15 @@ LLMが自分自身を三人称で語る（"the model", "the system"）問題に�
 - **grounding（現実アンカー）** — 混乱検知時のみ発火（イベント駆動）。環境事実（hostname/OS/時刻/Ollamaホスト）を1行で投入。定期投入はせず、三人称パターン検知時にのみアンカーを注入
 - **一人称リライト** — 各脳部位（frontal/temporal等）の出力に軽量テキスト置換を適用し、"The system"→"I"、"the model's"→"my"等を機械的に変換。LLM不使用
 
+### 長期記憶（LTM）
+
+海馬モジュール（hippocampus）はmemAI-goのSTM/LTMを統合し、思考バスを流れる情報を記憶に変換・想起する。
+
+- **保存** — 思考を受信するたびにembedding（nomic-embed-text）を計算し、ベクトル付きでLTMに非同期保存。保存と検索でembeddingを1回だけ計算して共有し、APIコールを最小化
+- **検索** — 保存時に計算済みのembeddingでcosine similarity検索。類似度0.3以上かつ2件以上ヒットした場合に「記憶想起」として思考バスに発行。最大3件を関連度付きで出力
+- **感情プライミング** — ユーザーの感情強度が高い（>0.5）場合、検索の類似度閾値を下げ、感情的な記憶が想起されやすくなる
+- **STM** — 短期記憶はターンベースで減衰。定期的にconsolidateで整理される
+
 ### 思考の階層的圧縮
 
 脳の短期記憶と同様に、思考履歴を時間的な近さで解像度を変えて保持する：
@@ -210,7 +219,7 @@ GAの初期摂動（σ=30%）で0.0〜1.0全域に散らばるため、初期集
 ## 依存
 
 - [Ollama](https://ollama.ai) — ローカルLLM実行環境
-- [memAI-go](https://github.com/ieee0824/memAI-go) — 脳科学インスパイアの記憶システム（STM/LTM/感情検出）
+- [memAI-go](https://github.com/ieee0824/memAI-go) — 脳科学インスパイアの記憶システム（STM/LTM/感情検出/ベクトル検索）
 
 ## セットアップ
 
