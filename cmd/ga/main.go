@@ -24,8 +24,9 @@ type Result struct {
 }
 
 type ResultEntry struct {
-	ID      string  `json:"id"`
-	Fitness float64 `json:"fitness"`
+	ID      string         `json:"id"`
+	Fitness float64        `json:"fitness"`
+	Params  *config.Params `json:"params,omitempty"`
 }
 
 func main() {
@@ -40,6 +41,7 @@ func main() {
 	output := flag.String("output", "results.json", "結果出力先")
 	binary := flag.String("binary", "", "lmindバイナリパス (デフォルト: 自動検出)")
 	charSetting := flag.String("char-setting", "", "char_setting.md のパス (デフォルト: ~/.lmind/char_setting.md)")
+	seedParams := flag.String("seed-params", "", "初期集団のベースパラメータJSON (デフォルト: DefaultParams)")
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -97,7 +99,19 @@ func main() {
 	var bestEverGen int
 
 	// 初期集団生成
-	pop := ga.NewPopulation(bin, *basePort, baseDir, charPath, *population)
+	// シードパラメータ読み込み
+	var seedBase *config.Params
+	if *seedParams != "" {
+		p, err := config.LoadParams(*seedParams)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "seed-params読み込みエラー: %v\n", err)
+			os.Exit(1)
+		}
+		seedBase = p
+		fmt.Printf("シードパラメータ: %s\n", *seedParams)
+	}
+
+	pop := ga.NewPopulation(bin, *basePort, baseDir, charPath, *population, seedBase)
 
 	// 村の地理座標（世代間で引き継ぐ）
 	var villagePositions [][2]float64
@@ -148,7 +162,8 @@ func main() {
 		var entries []ResultEntry
 		for _, ind := range inds {
 			fmt.Printf("  %s: fitness=%.4f\n", ind.ID, ind.Fitness)
-			entries = append(entries, ResultEntry{ID: ind.ID, Fitness: ind.Fitness})
+			p := ind.Params
+			entries = append(entries, ResultEntry{ID: ind.ID, Fitness: ind.Fitness, Params: &p})
 		}
 		results = append(results, Result{
 			Generation: gen + 1,

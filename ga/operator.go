@@ -112,6 +112,11 @@ func Crossover(a, b *Individual, genIdx, childIdx int) *Individual {
 			Verbosity:  pick(pa.Personality.Verbosity, pb.Personality.Verbosity),
 			Empathy:    pick(pa.Personality.Empathy, pb.Personality.Empathy),
 		},
+		LTM: config.LTMParams{
+			RecallWeight:     pick(pa.LTM.RecallWeight, pb.LTM.RecallWeight),
+			RecallMaxResults: pickInt(pa.LTM.RecallMaxResults, pb.LTM.RecallMaxResults),
+			RecallMinScore:   pick(pa.LTM.RecallMinScore, pb.LTM.RecallMinScore),
+		},
 	}
 
 	return child

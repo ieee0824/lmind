@@ -182,7 +182,8 @@ func main() {
 		EmbeddingFn: func(ctx context.Context, text string) ([]float64, error) {
 			return client.Embedding(ctx, "nomic-embed-text", text)
 		},
-		Interval: dur(params.Intervals.Hippocampus),
+		Interval:  dur(params.Intervals.Hippocampus),
+		LTMParams: params.LTM,
 	})
 
 	// 仮説生成モジュール: 前頭葉・側頭葉の出力から仮説を生成・更新

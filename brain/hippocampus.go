@@ -3,11 +3,13 @@ package brain
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
 	memai "github.com/ieee0824/memAI-go"
 	"github.com/ieee0824/lmind/bus"
+	"github.com/ieee0824/lmind/config"
 	"github.com/ieee0824/lmind/logger"
 	"github.com/ieee0824/lmind/ollama"
 )
@@ -29,6 +31,7 @@ type Hippocampus struct {
 	store     memai.MemoryStore[int64]
 	embedding memai.EmbeddingFunc
 	analyzer  memai.EmotionAnalyzer
+	ltmParams config.LTMParams
 	turn      int
 }
 
@@ -41,6 +44,7 @@ type HippocampusConfig struct {
 	Store       memai.MemoryStore[int64]
 	EmbeddingFn memai.EmbeddingFunc
 	Interval    time.Duration
+	LTMParams   config.LTMParams
 }
 
 func NewHippocampus(cfg HippocampusConfig) *Hippocampus {
@@ -57,6 +61,7 @@ func NewHippocampus(cfg HippocampusConfig) *Hippocampus {
 		store:     cfg.Store,
 		embedding: cfg.EmbeddingFn,
 		analyzer:  memai.NewKeywordEmotionAnalyzer(memai.LangJapanese),
+		ltmParams: cfg.LTMParams,
 	}
 	h.inbox = cfg.Bus.Subscribe(h.Name)
 	return h
@@ -112,20 +117,24 @@ func (h *Hippocampus) process(ctx context.Context, incoming bus.Thought) {
 		Emotional:    emotion.Intensity > 0.3,
 	})
 
-	// embeddingを1回だけ計算して保存と検索で共有する
+	// LTM処理を完全非同期化（embedding計算・保存・検索・想起発行をバックグラウンドで行う）
+	go h.processLTM(ctx, incoming, content, emotion)
+}
+
+// processLTM はembedding計算・LTM保存・検索・想起発行をバックグラウンドで行う
+func (h *Hippocampus) processLTM(ctx context.Context, incoming bus.Thought, content string, emotion *memai.EmotionalState) {
 	emb, err := h.embedding(ctx, content)
 	if err != nil {
 		h.logger.Error(h.Name, fmt.Sprintf("LTM embedding生成エラー: %v", err))
+		return
 	}
 
-	// LTMに非同期保存（思考ループをブロックしない）
-	go func() {
-		if saveErr := h.saveLTM(ctx, incoming, emotion, emb); saveErr != nil {
-			h.logger.Error(h.Name, fmt.Sprintf("LTM保存エラー: %v", saveErr))
-		}
-	}()
+	// 保存
+	if err := h.saveLTM(ctx, incoming, emotion, emb); err != nil {
+		h.logger.Error(h.Name, fmt.Sprintf("LTM保存エラー: %v", err))
+	}
 
-	// LTMから関連記憶を検索（事前計算済みembeddingを使い回す）
+	// 検索
 	results, err := h.ltm.Search(ctx, memai.SearchQuery{
 		Query:              content,
 		QueryEmbedding:     emb,
@@ -137,9 +146,31 @@ func (h *Hippocampus) process(ctx context.Context, incoming bus.Thought) {
 	}
 	h.logger.Info(h.Name, fmt.Sprintf("LTM検索: %d件ヒット (保存済み: %d件)", len(results), h.memoryCount(ctx)))
 
-	// 関連記憶があれば想起として思考バスに流す（自分自身を除く）
-	if len(results) > 1 {
-		recall := h.formatRecall(results, emotion)
+	// RecallWeightによる確率的フィルタ（0なら想起しない、1なら常に想起）
+	if h.ltmParams.RecallWeight <= 0 || rand.Float64() > h.ltmParams.RecallWeight {
+		return
+	}
+
+	// RecallMinScoreでフィルタ
+	var filtered []memai.SearchResult[int64]
+	for _, r := range results {
+		if r.Score >= h.ltmParams.RecallMinScore {
+			filtered = append(filtered, r)
+		}
+	}
+
+	// RecallMaxResultsで件数制限
+	maxResults := h.ltmParams.RecallMaxResults
+	if maxResults <= 0 {
+		maxResults = 3
+	}
+	if len(filtered) > maxResults {
+		filtered = filtered[:maxResults]
+	}
+
+	// 関連記憶があれば想起として思考バスに流す
+	if len(filtered) > 1 {
+		recall := h.formatRecall(filtered, emotion)
 		if recall != "" {
 			thought := bus.Thought{
 				From:    h.Name,
@@ -192,13 +223,8 @@ func (h *Hippocampus) formatRecall(results []memai.SearchResult[int64], emotion 
 	}
 	sb.WriteString("\n")
 
-	count := 0
 	for _, r := range results {
-		if count >= 3 {
-			break
-		}
 		fmt.Fprintf(&sb, "- [%s] %s (関連度: %.2f)\n", r.Memory.ThreadKey, r.Memory.Content, r.Score)
-		count++
 	}
 	return sb.String()
 }

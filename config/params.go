@@ -22,6 +22,14 @@ type Params struct {
 	Bonnou          BonnouParams         `json:"bonnou"`
 	History         HistoryParams        `json:"history"`
 	Personality     PersonalityParams    `json:"personality"`
+	LTM             LTMParams            `json:"ltm"`
+}
+
+// LTMParams は長期記憶モジュールのパラメータ
+type LTMParams struct {
+	RecallWeight    float64 `json:"recall_weight"`     // 0=想起を無視 ↔ 1=全て流す（確率的にフィルタ）
+	RecallMaxResults int    `json:"recall_max_results"` // 想起で返す最大件数
+	RecallMinScore  float64 `json:"recall_min_score"`  // cosine similarity最低閾値
 }
 
 // PersonalityParams は性格の数値次元。GAで進化可能。
@@ -191,6 +199,11 @@ func DefaultParams() *Params {
 			Curiosity:  0.5,
 			Verbosity:  0.4,
 			Empathy:    0.5,
+		},
+		LTM: LTMParams{
+			RecallWeight:     1.0,
+			RecallMaxResults: 3,
+			RecallMinScore:   0.3,
 		},
 	}
 }

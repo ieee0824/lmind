@@ -25,8 +25,9 @@ type Population struct {
 	Individuals     []*Individual
 }
 
-// NewPopulation は初期集団を生成する（DefaultParamsにランダム摂動を加える）
-func NewPopulation(binary string, basePort int, baseDir string, charSettingPath string, size int) *Population {
+// NewPopulation は初期集団を生成する。
+// seedが非nilならそれをベースに摂動、nilならDefaultParamsをベースにする。
+func NewPopulation(binary string, basePort int, baseDir string, charSettingPath string, size int, seed *config.Params) *Population {
 	pop := &Population{
 		Binary:          binary,
 		BasePort:        basePort,
@@ -35,12 +36,17 @@ func NewPopulation(binary string, basePort int, baseDir string, charSettingPath 
 		Size:            size,
 	}
 
+	base := config.DefaultParams()
+	if seed != nil {
+		base = seed
+	}
+
 	for i := range size {
-		params := config.DefaultParams()
-		mutateParams(params, 0.3) // 初期摂動は大きめ
+		params := *base // コピー
+		mutateParams(&params, 0.3) // 初期摂動は大きめ
 		pop.Individuals = append(pop.Individuals, &Individual{
 			ID:     fmt.Sprintf("gen0-ind%d", i),
-			Params: *params,
+			Params: params,
 			Port:   basePort + i,
 		})
 	}
@@ -268,4 +274,9 @@ func mutateParams(p *config.Params, rate float64) {
 	p.Personality.Curiosity = perturb(p.Personality.Curiosity, 0.0, 1.0)
 	p.Personality.Verbosity = perturb(p.Personality.Verbosity, 0.0, 1.0)
 	p.Personality.Empathy = perturb(p.Personality.Empathy, 0.0, 1.0)
+
+	// LTM
+	p.LTM.RecallWeight = perturb(p.LTM.RecallWeight, 0.0, 1.0)
+	p.LTM.RecallMaxResults = perturbInt(p.LTM.RecallMaxResults, 1, 10)
+	p.LTM.RecallMinScore = perturb(p.LTM.RecallMinScore, 0.1, 0.8)
 }

@@ -141,9 +141,10 @@ LLMが自分自身を三人称で語る（"the model", "the system"）問題に�
 海馬モジュール（hippocampus）はmemAI-goのSTM/LTMを統合し、思考バスを流れる情報を記憶に変換・想起する。
 
 - **保存** — 思考を受信するたびにembedding（nomic-embed-text）を計算し、ベクトル付きでLTMに非同期保存。保存と検索でembeddingを1回だけ計算して共有し、APIコールを最小化
-- **検索** — 保存時に計算済みのembeddingでcosine similarity検索。類似度0.3以上かつ2件以上ヒットした場合に「記憶想起」として思考バスに発行。最大3件を関連度付きで出力
+- **検索** — 保存時に計算済みのembeddingでcosine similarity検索。2件以上ヒットした場合に「記憶想起」として思考バスに発行
 - **感情プライミング** — ユーザーの感情強度が高い（>0.5）場合、検索の類似度閾値を下げ、感情的な記憶が想起されやすくなる
 - **STM** — 短期記憶はターンベースで減衰。定期的にconsolidateで整理される
+- **GAパラメータ** — LTMの影響度はGAで進化可能。`recall_weight`（想起確率: 0=完全オフ〜1=常時）、`recall_max_results`（最大件数: 1〜10）、`recall_min_score`（cosine similarity閾値: 0.1〜0.8）の3パラメータを交叉・突然変異で最適化する
 
 ### 思考の階層的圧縮
 
@@ -331,7 +332,8 @@ go build -o lmind-ga ./cmd/ga
 | `-base-port` | 9000 | ベースポート（連番で割り当て） |
 | `-binary` | 自動検出 | lmindバイナリのパス |
 | `-char-setting` | ~/.lmind/char_setting.md | 性格設定ファイルのパス |
-| `-output` | results.json | 結果JSON出力先 |
+| `-seed-params` | — | 初期集団のベースパラメータJSON（前回のbest_params.jsonを指定して継続進化） |
+| `-output` | results.json | 結果JSON出力先（各個体の全パラメータを含む） |
 
 #### 村モデル（Island Model + 地理座標）
 
