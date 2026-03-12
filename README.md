@@ -227,6 +227,8 @@ State のうち goal のみSQLiteに永続化される。hypothesis はセッシ
 |---------------|---------|------|
 | `/api/chat` | POST | メッセージ送信・応答取得 |
 | `/api/thoughts` | GET | 直近の思考一覧 |
+| `/api/metrics` | GET | 適応度メトリクス |
+| `/api/params` | GET | 現在のパラメータ設定 |
 
 ```bash
 # チャット
@@ -239,4 +241,64 @@ curl -s -X POST http://localhost:8080/api/chat \
 curl -s http://localhost:8080/api/thoughts
 # => [{"from":"frontal","content":"...","created_at":"15:04:05"}, ...]
 
+# メトリクス
+curl -s http://localhost:8080/api/metrics
+# => {"thought_repetition_rate":0.32,"meta_self_reference_count":1,...}
+
+# パラメータ
+curl -s http://localhost:8080/api/params
+# => {"intervals":{"frontal":30,...},...}
 ```
+
+### パラメータ設定
+
+`-config` フラグでJSONファイルからパラメータを指定できる。未指定のフィールドはデフォルト値が使われる。
+
+```bash
+./lmind -config params.json
+```
+
+`-data` フラグでデータディレクトリを分離できる（デフォルト: `~/.lmind`）。複数インスタンスの同時実行に必要。
+
+```bash
+./lmind -api :8080 -data /tmp/lmind-instance1 -config params1.json
+./lmind -api :8081 -data /tmp/lmind-instance2 -config params2.json
+```
+
+### 遺伝的アルゴリズムによるパラメータ最適化
+
+複数のlmindインスタンスを対話させ、自己ループに陥らないパラメータを進化させる。
+
+```bash
+go build -o lmind .
+go build -o lmind-ga ./cmd/ga
+
+./lmind-ga \
+  -population 4 \
+  -generations 5 \
+  -rounds 10 \
+  -seed "こんにちは、最近どう？" \
+  -base-port 9000 \
+  -binary ./lmind \
+  -output results.json
+```
+
+| フラグ | デフォルト | 説明 |
+|-------|-----------|------|
+| `-population` | 4 | 個体数（同時起動するlmindインスタンス数） |
+| `-generations` | 5 | 世代数 |
+| `-rounds` | 10 | 1評価あたりの対話往復数 |
+| `-seed` | こんにちは、最近どう？ | 対話の最初のメッセージ |
+| `-base-port` | 9000 | ベースポート（連番で割り当て） |
+| `-binary` | 自動検出 | lmindバイナリのパス |
+| `-output` | results.json | 結果JSON出力先 |
+
+適応度関数:
+```
+fitness = 0.4 × (1 - repetition_rate)
+        + 0.2 × (1 - meta_self_ref / total)
+        + 0.2 × min(1, unique_topics / 20)
+        + 0.2 × (1 - min(1, avg_resp_ms / 30000))
+```
+
+最良パラメータは `best_params.json` に自動保存される。`-config best_params.json` でそのまま使える。
