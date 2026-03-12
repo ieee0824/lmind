@@ -11,7 +11,9 @@
 
 ```mermaid
 graph TD
-    subgraph LLM思考ループ
+    bus["思考バス<br/>(Go channels)<br/>直近3件は全文、古い思考はLLM要約"]
+
+    subgraph llm_loop["LLM思考ループ"]
         frontal["frontal<br/>前頭葉 · gemma3:4b<br/>構造分析"]
         temporal["temporal<br/>側頭葉 · gemma3:1b<br/>状況理解"]
         hippocampus["hippocampus<br/>海馬 · gemma3:1b<br/>記憶/想起"]
@@ -23,21 +25,19 @@ graph TD
     hippocampus <--> bus
     hypothesis <--> bus
 
-    bus["思考バス<br/>(Go channels)<br/>直近3件は全文、古い思考はLLM要約"]
-
-    subgraph メタモジュール（LLM不使用）
+    subgraph meta["メタモジュール（LLM不使用）"]
         novelty["novelty<br/>新規性検知"]
         critic["critic<br/>自己評価"]
         curiosity["curiosity<br/>探索促進"]
     end
 
-    subgraph 自己認識・感情（LLM不使用）
+    subgraph self_aware["自己認識・感情（LLM不使用）"]
         identity["identity<br/>混乱検知"]
         grounding["grounding<br/>現実固定"]
         sentiment["sentiment<br/>感情ゲート"]
     end
 
-    subgraph 予測・注意（LLM不使用）
+    subgraph pred_attn["予測・注意（LLM不使用）"]
         prediction_error["prediction_error<br/>予測誤差 → 仮説ドロップ"]
         attention["attention<br/>サリエンスフィルタ"]
     end
