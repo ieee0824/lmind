@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 
 	"github.com/ieee0824/lmind/ollama"
@@ -190,4 +191,122 @@ func allPairs(inds []*Individual) [][2]*Individual {
 		}
 	}
 	return pairs
+}
+
+// VillageFitness は村の平均fitnessを返す
+func (v *Village) AvgFitness() float64 {
+	if len(v.Members) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, m := range v.Members {
+		sum += m.Fitness
+	}
+	return sum / float64(len(v.Members))
+}
+
+// ConquestResult は征服の結果
+type ConquestResult struct {
+	WinnerID   string
+	LoserID    string
+	WinnerAvg  float64
+	LoserAvg   float64
+	MigratedID string  // 移住したエースのID
+	Replaced   int     // 子孫で埋めた人数
+}
+
+// Conquest は村の生存競争を行う。
+// 1. 最下位の村を滅亡（全員消去）
+// 2. 最上位の村のトップ個体が移住（パラメータそのまま）
+// 3. 残りの枠は勝者の村のメンバーを親にした子孫で埋める
+// → 勝者の村はエースを失い、敗者の村は勝者の遺伝子で再建される
+func (t *Topology) Conquest(genIdx, basePort int) (*ConquestResult, []*Individual) {
+	if len(t.Villages) < 2 {
+		return nil, t.AllIndividuals()
+	}
+
+	// 村を平均fitnessでソート（高い順）
+	ranked := make([]*Village, len(t.Villages))
+	copy(ranked, t.Villages)
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].AvgFitness() > ranked[j].AvgFitness()
+	})
+
+	winner := ranked[0]
+	loser := ranked[len(ranked)-1]
+
+	// 同じ村なら征服しない
+	if winner.ID == loser.ID {
+		return nil, t.AllIndividuals()
+	}
+
+	// 勝者の村のトップ個体を特定
+	var ace *Individual
+	for _, m := range winner.Members {
+		if ace == nil || m.Fitness > ace.Fitness {
+			ace = m
+		}
+	}
+
+	result := &ConquestResult{
+		WinnerID:   winner.ID,
+		LoserID:    loser.ID,
+		WinnerAvg:  winner.AvgFitness(),
+		LoserAvg:   loser.AvgFitness(),
+		MigratedID: ace.ID,
+		Replaced:   len(loser.Members) - 1, // エース1人 + 子孫で残り
+	}
+
+	// ポート番号用のオフセット
+	portOffset := 0
+	for _, v := range t.Villages {
+		portOffset += len(v.Members)
+	}
+
+	// 敗者の村を再建: エース移住 + 子孫で埋める
+	newMembers := make([]*Individual, 0, len(loser.Members))
+
+	// エースを移住（パラメータそのまま引き継ぎ）
+	aceCopy := &Individual{
+		ID:     ace.ID, // IDもそのまま
+		Params: ace.Params,
+		Port:   basePort + portOffset,
+	}
+	newMembers = append(newMembers, aceCopy)
+
+	// 残りは勝者の村のメンバーから子孫を生成
+	for i := 1; i < len(loser.Members); i++ {
+		parentA := winner.Members[rand.Intn(len(winner.Members))]
+		parentB := winner.Members[rand.Intn(len(winner.Members))]
+		if len(winner.Members) > 1 {
+			for parentB.ID == parentA.ID {
+				parentB = winner.Members[rand.Intn(len(winner.Members))]
+			}
+		}
+		child := Crossover(parentA, parentB, genIdx, portOffset+i)
+		Mutate(child, 0.2)
+		child.Port = basePort + portOffset + i
+		newMembers = append(newMembers, child)
+	}
+	loser.Members = newMembers
+
+	// 勝者の村からエースを除去
+	remaining := make([]*Individual, 0, len(winner.Members)-1)
+	for _, m := range winner.Members {
+		if m.ID != ace.ID {
+			remaining = append(remaining, m)
+		}
+	}
+	winner.Members = remaining
+
+	return result, t.AllIndividuals()
+}
+
+// allIndividuals は全村のメンバーをフラットに返す
+func (t *Topology) AllIndividuals() []*Individual {
+	var all []*Individual
+	for _, v := range t.Villages {
+		all = append(all, v.Members...)
+	}
+	return all
 }

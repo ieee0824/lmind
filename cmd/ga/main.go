@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ieee0824/lmind/config"
 	"github.com/ieee0824/lmind/ga"
 	"github.com/ieee0824/lmind/ollama"
 )
@@ -89,6 +90,12 @@ func main() {
 
 	var results []Result
 
+	// 歴代最高の追跡
+	var bestEverFitness float64
+	var bestEverParams *config.Params
+	var bestEverID string
+	var bestEverGen int
+
 	// 初期集団生成
 	pop := ga.NewPopulation(bin, *basePort, baseDir, charPath, *population)
 
@@ -146,6 +153,25 @@ func main() {
 			All:        entries,
 		})
 
+		// 歴代最高を更新
+		if inds[0].Fitness > bestEverFitness {
+			bestEverFitness = inds[0].Fitness
+			bestEverID = inds[0].ID
+			bestEverGen = gen + 1
+			p := inds[0].Params // コピー
+			bestEverParams = &p
+			fmt.Printf("  ★ 歴代最高更新: %s (fitness=%.4f)\n", bestEverID, bestEverFitness)
+		}
+
+		// 村の生存競争（征服）
+		if len(topo.Villages) >= 2 {
+			cr, _ := topo.Conquest(gen+1, *basePort)
+			if cr != nil {
+				fmt.Printf("  ⚔ 征服: %s(avg=%.4f) → %s(avg=%.4f) エース%s移住 + %d人子孫\n",
+					cr.WinnerID, cr.WinnerAvg, cr.LoserID, cr.LoserAvg, cr.MigratedID, cr.Replaced)
+			}
+		}
+
 		// シャットダウン
 		fmt.Print("シャットダウン中...")
 		pop.Shutdown()
@@ -153,8 +179,10 @@ func main() {
 		fmt.Println(" OK")
 
 		// 次世代生成（最終世代以外）
+		// 征服後の個体群を含めて次世代へ
 		if gen+1 < *generations {
-			nextInds := ga.NextGeneration(inds, gen+1, *basePort)
+			allInds := topo.AllIndividuals()
+			nextInds := ga.NextGeneration(allInds, gen+1, *basePort)
 			pop.Individuals = nextInds
 		}
 
@@ -169,14 +197,11 @@ func main() {
 		fmt.Printf("結果を %s に保存しました\n", *output)
 	}
 
-	// 最良パラメータを出力
-	if len(results) > 0 {
-		lastGen := results[len(results)-1]
-		fmt.Printf("\n=== 最良個体: %s (fitness=%.4f) ===\n", lastGen.Best.ID, lastGen.Best.Fitness)
+	// 歴代最高パラメータを出力
+	if bestEverParams != nil {
+		fmt.Printf("\n=== 歴代最良個体: %s (第%d世代, fitness=%.4f) ===\n", bestEverID, bestEverGen, bestEverFitness)
 
-		// 最良個体のパラメータをファイルに保存
-		bestInd := pop.Individuals[0] // ソート済みなので先頭
-		bestParams, _ := json.MarshalIndent(bestInd.Params, "", "  ")
+		bestParams, _ := json.MarshalIndent(bestEverParams, "", "  ")
 		bestPath := "best_params.json"
 		if err := os.WriteFile(bestPath, bestParams, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "パラメータ書き出しエラー: %v\n", err)

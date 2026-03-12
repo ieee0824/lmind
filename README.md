@@ -319,6 +319,18 @@ Village-0: [ind0, ind1, ind2]    Village-1: [ind3, ind4, ind5]
 - 20%の確率で意味的に**遠い**村から「変わったやつ」が来る（小世界ネットワーク的な意外性で局所解を壊す）
 - Ollama未接続時はランダムペアリングにフォールバック
 
+#### 村の生存競争（征服）
+
+評価後、村の平均fitnessでランキングし、最下位の村を征服する：
+
+1. **最下位の村を滅亡** — メンバー全員を消去
+2. **エース移住** — 最上位の村のトップ個体がパラメータそのまま移住
+3. **子孫で再建** — 残りの枠は勝者の村のメンバーを親にした交叉+突然変異で埋める
+
+勝者の村はエースを失って弱体化し、一強支配を防ぐ。敗者の村は勝者の遺伝子で再建される。世代を重ねるごとに村間の力関係が入れ替わり、集団全体の多様性と適応度を同時に押し上げる。
+
+歴代最高のfitnessを記録した個体のパラメータは、最終世代の結果とは別に追跡・保存される。
+
 #### 適応度関数
 
 ```
@@ -328,4 +340,32 @@ fitness = 0.4 × (1 - repetition_rate)
         + 0.2 × (1 - min(1, avg_resp_ms / 30000))
 ```
 
-最良パラメータは `best_params.json` に自動保存される。`-config best_params.json` でそのまま使える。
+最良パラメータは `best_params.json` に自動保存される（歴代最高の個体）。`-config best_params.json` でそのまま使える。
+
+### GA実行監視
+
+GA実行中の全個体の思考・会話をリアルタイムで流すCLI。
+
+```bash
+go build -o lmind-watch ./cmd/watch
+
+# GA実行中の全個体の会話を流す
+./lmind-watch -dir /tmp/lmind-ga-xxx -chat
+
+# 全モジュールの思考も含めて表示
+./lmind-watch -dir /tmp/lmind-ga-xxx
+
+# 特定のregionだけ
+./lmind-watch -dir /tmp/lmind-ga-xxx -regions user,broca,hypothesis
+
+# 通常のlmind（~/.lmind/thoughts.db を自動監視）
+./lmind-watch -chat
+```
+
+| フラグ | デフォルト | 説明 |
+|-------|-----------|------|
+| `-dir` | — | GA一時ディレクトリ（複数個体のDBを同時監視） |
+| `-db` | — | 単一のthoughts.dbパス |
+| `-chat` | false | 会話のみ表示（user, broca） |
+| `-regions` | 全部 | 表示するregionをカンマ区切り |
+| `-interval` | 1.0 | ポーリング間隔（秒） |
