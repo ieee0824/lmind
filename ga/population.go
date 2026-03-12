@@ -17,20 +17,22 @@ import (
 
 // Population はGA世代の個体群を管理する
 type Population struct {
-	Binary   string // lmindバイナリのパス
-	BasePort int
-	BaseDir  string // 一時ディレクトリのルート
-	Size     int
-	Individuals []*Individual
+	Binary          string // lmindバイナリのパス
+	BasePort        int
+	BaseDir         string // 一時ディレクトリのルート
+	CharSettingPath string // char_setting.md のパス
+	Size            int
+	Individuals     []*Individual
 }
 
 // NewPopulation は初期集団を生成する（DefaultParamsにランダム摂動を加える）
-func NewPopulation(binary string, basePort int, baseDir string, size int) *Population {
+func NewPopulation(binary string, basePort int, baseDir string, charSettingPath string, size int) *Population {
 	pop := &Population{
-		Binary:   binary,
-		BasePort: basePort,
-		BaseDir:  baseDir,
-		Size:     size,
+		Binary:          binary,
+		BasePort:        basePort,
+		BaseDir:         baseDir,
+		CharSettingPath: charSettingPath,
+		Size:            size,
 	}
 
 	for i := range size {
@@ -67,6 +69,17 @@ func (p *Population) spawnOne(ctx context.Context, ind *Individual) error {
 	ind.DataDir = filepath.Join(p.BaseDir, ind.ID)
 	if err := os.MkdirAll(ind.DataDir, 0755); err != nil {
 		return err
+	}
+
+	// char_setting.md をコピー
+	if p.CharSettingPath != "" {
+		charData, err := os.ReadFile(p.CharSettingPath)
+		if err != nil {
+			return fmt.Errorf("char_setting.md読み込み失敗: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(ind.DataDir, "char_setting.md"), charData, 0644); err != nil {
+			return err
+		}
 	}
 
 	// パラメータJSONを書き出し

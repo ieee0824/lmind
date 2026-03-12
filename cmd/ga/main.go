@@ -34,6 +34,7 @@ func main() {
 	basePort := flag.Int("base-port", 9000, "ベースポート")
 	output := flag.String("output", "results.json", "結果出力先")
 	binary := flag.String("binary", "", "lmindバイナリパス (デフォルト: 自動検出)")
+	charSetting := flag.String("char-setting", "", "char_setting.md のパス (デフォルト: ~/.lmind/char_setting.md)")
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -48,6 +49,21 @@ func main() {
 		} else {
 			bin = filepath.Join(filepath.Dir(exe), "lmind")
 		}
+	}
+
+	// char_setting.md パス
+	charPath := *charSetting
+	if charPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+			os.Exit(1)
+		}
+		charPath = filepath.Join(home, ".lmind", "char_setting.md")
+	}
+	if _, err := os.Stat(charPath); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: char_setting.md が見つかりません: %s\n", charPath)
+		os.Exit(1)
 	}
 
 	// 一時ディレクトリ
@@ -66,7 +82,7 @@ func main() {
 	var results []Result
 
 	// 初期集団生成
-	pop := ga.NewPopulation(bin, *basePort, baseDir, *population)
+	pop := ga.NewPopulation(bin, *basePort, baseDir, charPath, *population)
 
 	for gen := range *generations {
 		fmt.Printf("--- 第%d世代 ---\n", gen+1)
