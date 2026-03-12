@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/ieee0824/lmind/ga"
@@ -30,7 +29,10 @@ type ResultEntry struct {
 func main() {
 	population := flag.Int("population", 4, "個体数")
 	generations := flag.Int("generations", 5, "世代数")
-	rounds := flag.Int("rounds", 10, "対話往復数")
+	rounds := flag.Int("rounds", 10, "村内対話の往復数")
+	interRounds := flag.Int("inter-rounds", 3, "村間交流の往復数")
+	villageSize := flag.Int("village-size", 0, "村のサイズ (0=自動)")
+	interRate := flag.Float64("inter-rate", 0.5, "村間交流の発生確率 (0.0-1.0)")
 	seed := flag.String("seed", "こんにちは、最近どう？", "初期メッセージ")
 	basePort := flag.Int("base-port", 9000, "ベースポート")
 	output := flag.String("output", "results.json", "結果出力先")
@@ -76,7 +78,8 @@ func main() {
 	defer os.RemoveAll(baseDir)
 
 	fmt.Printf("=== lmind GA ===\n")
-	fmt.Printf("個体数: %d, 世代数: %d, 対話往復: %d\n", *population, *generations, *rounds)
+	fmt.Printf("個体数: %d, 世代数: %d, 村内往復: %d, 村間往復: %d\n", *population, *generations, *rounds, *interRounds)
+	fmt.Printf("村サイズ: %d (0=自動), 村間交流率: %.1f\n", *villageSize, *interRate)
 	fmt.Printf("ベースポート: %d, バイナリ: %s\n", *basePort, bin)
 	fmt.Printf("一時ディレクトリ: %s\n\n", baseDir)
 
@@ -107,21 +110,13 @@ func main() {
 		}
 		fmt.Println(" OK")
 
-		// ペアリング対話（並列）
-		fmt.Printf("対話中 (%d往復)...\n", *rounds)
+		// 村モデルによる対話
 		inds := pop.Individuals
-		var wg sync.WaitGroup
-		for i := 0; i+1 < len(inds); i += 2 {
-			fmt.Printf("  %s <-> %s\n", inds[i].ID, inds[i+1].ID)
-			wg.Add(1)
-			go func(a, b *ga.Individual) {
-				defer wg.Done()
-				if err := ga.Converse(ctx, a, b, *rounds, *seed); err != nil {
-					fmt.Fprintf(os.Stderr, "  対話エラー: %v\n", err)
-				}
-			}(inds[i], inds[i+1])
+		topo := ga.NewTopology(inds, *villageSize, *rounds, *interRounds, *interRate)
+		fmt.Printf("対話中 (%d村)...\n", len(topo.Villages))
+		if err := topo.RunConversations(ctx, *seed); err != nil {
+			fmt.Fprintf(os.Stderr, "  対話エラー: %v\n", err)
 		}
-		wg.Wait()
 
 		// メトリクス収集・適応度計算
 		fmt.Print("評価中...")

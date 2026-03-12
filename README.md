@@ -274,9 +274,12 @@ go build -o lmind .
 go build -o lmind-ga ./cmd/ga
 
 ./lmind-ga \
-  -population 4 \
+  -population 6 \
   -generations 5 \
-  -rounds 10 \
+  -rounds 5 \
+  -inter-rounds 2 \
+  -village-size 3 \
+  -inter-rate 0.5 \
   -seed "こんにちは、最近どう？" \
   -base-port 9000 \
   -binary ./lmind \
@@ -287,13 +290,35 @@ go build -o lmind-ga ./cmd/ga
 |-------|-----------|------|
 | `-population` | 4 | 個体数（同時起動するlmindインスタンス数） |
 | `-generations` | 5 | 世代数 |
-| `-rounds` | 10 | 1評価あたりの対話往復数 |
+| `-rounds` | 10 | 村内対話の往復数 |
+| `-inter-rounds` | 3 | 村間交流の往復数 |
+| `-village-size` | 0（自動） | 村のサイズ（0=自動: 6人以上なら3人、未満なら2人） |
+| `-inter-rate` | 0.5 | 村間交流の発生確率（0.0〜1.0） |
 | `-seed` | こんにちは、最近どう？ | 対話の最初のメッセージ |
 | `-base-port` | 9000 | ベースポート（連番で割り当て） |
 | `-binary` | 自動検出 | lmindバイナリのパス |
+| `-char-setting` | ~/.lmind/char_setting.md | 性格設定ファイルのパス |
 | `-output` | results.json | 結果JSON出力先 |
 
-適応度関数:
+#### 村モデル（Island Model）
+
+個体を小さな「村」に分け、村内では総当たりで密に対話し、村間では代表者が緩やかに交流する。
+
+```
+Village-0: [ind0, ind1, ind2]    Village-1: [ind3, ind4, ind5]
+  ind0 <-> ind1 (5往復)            ind3 <-> ind4 (5往復)
+  ind0 <-> ind2 (5往復)            ind3 <-> ind5 (5往復)
+  ind1 <-> ind2 (5往復)            ind4 <-> ind5 (5往復)
+            ↕ 確率50%で代表者が交流 ↕
+         ind2 <-> ind3 (2往復)
+```
+
+- 村内の密な対話で「相性の良いパラメータ群」が形成される
+- 村間の緩い交流で多様性を維持し、局所解に陥るのを防ぐ
+- 村はリング状に接続され、隣接する村同士が交流する
+
+#### 適応度関数
+
 ```
 fitness = 0.4 × (1 - repetition_rate)
         + 0.2 × (1 - meta_self_ref / total)
