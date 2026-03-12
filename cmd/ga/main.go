@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/ieee0824/lmind/ga"
@@ -106,15 +107,21 @@ func main() {
 		}
 		fmt.Println(" OK")
 
-		// ペアリング対話
+		// ペアリング対話（並列）
 		fmt.Printf("対話中 (%d往復)...\n", *rounds)
 		inds := pop.Individuals
+		var wg sync.WaitGroup
 		for i := 0; i+1 < len(inds); i += 2 {
 			fmt.Printf("  %s <-> %s\n", inds[i].ID, inds[i+1].ID)
-			if err := ga.Converse(ctx, inds[i], inds[i+1], *rounds, *seed); err != nil {
-				fmt.Fprintf(os.Stderr, "  対話エラー: %v\n", err)
-			}
+			wg.Add(1)
+			go func(a, b *ga.Individual) {
+				defer wg.Done()
+				if err := ga.Converse(ctx, a, b, *rounds, *seed); err != nil {
+					fmt.Fprintf(os.Stderr, "  対話エラー: %v\n", err)
+				}
+			}(inds[i], inds[i+1])
 		}
+		wg.Wait()
 
 		// メトリクス収集・適応度計算
 		fmt.Print("評価中...")
