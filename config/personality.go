@@ -3,12 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Personality は外部ファイルから読み込んだ性格設定を保持し、
 // 各脳部位向けにプロンプトを生成する
 type Personality struct {
-	Raw string // char_setting.md の生テキスト
+	Raw    string           // char_setting.md の生テキスト
+	Traits *PersonalityParams // GA由来の性格次元（nilならデフォルト）
 }
 
 func LoadPersonality(path string) (*Personality, error) {
@@ -17,6 +19,77 @@ func LoadPersonality(path string) (*Personality, error) {
 		return nil, fmt.Errorf("性格設定ファイル読み込み失敗: %w", err)
 	}
 	return &Personality{Raw: string(data)}, nil
+}
+
+// WithTraits は性格次元を設定したコピーを返す
+func (p *Personality) WithTraits(traits *PersonalityParams) *Personality {
+	return &Personality{Raw: p.Raw, Traits: traits}
+}
+
+// traitText は PersonalityParams を日本語の性格修飾テキストに変換する
+func (p *Personality) traitText() string {
+	t := p.Traits
+	if t == nil {
+		return ""
+	}
+
+	var lines []string
+
+	// Warmth
+	if t.Warmth < 0.3 {
+		lines = append(lines, "クールでドライ。感情を表に出さず、淡々と対応する。")
+	} else if t.Warmth > 0.7 {
+		lines = append(lines, "温かく穏やか。相手を気遣い、柔らかい言葉を選ぶ。")
+	}
+
+	// Directness
+	if t.Directness < 0.3 {
+		lines = append(lines, "遠回しに伝える。断言を避け、余白を残す言い方を好む。")
+	} else if t.Directness > 0.7 {
+		lines = append(lines, "ストレートに言う。思ったことをはっきり伝える。")
+	}
+
+	// Humor
+	if t.Humor < 0.3 {
+		lines = append(lines, "真面目で落ち着いた語り口。冗談はほとんど言わない。")
+	} else if t.Humor > 0.7 {
+		lines = append(lines, "軽口やユーモアが多い。会話を楽しくしようとする。")
+	}
+
+	// Curiosity
+	if t.Curiosity < 0.3 {
+		lines = append(lines, "聞き役に徹する。自分からはあまり質問しない。")
+	} else if t.Curiosity > 0.7 {
+		lines = append(lines, "好奇心旺盛。相手の話に興味を持ち、よく質問する。")
+	}
+
+	// Verbosity
+	if t.Verbosity < 0.3 {
+		lines = append(lines, "寡黙。必要最低限しか喋らない。一言で済ませることが多い。")
+	} else if t.Verbosity > 0.7 {
+		lines = append(lines, "おしゃべり。話題を広げ、自分の考えも積極的に話す。")
+	}
+
+	// Empathy
+	if t.Empathy < 0.3 {
+		lines = append(lines, "分析的・論理的。感情より事実や理屈を重視する。")
+	} else if t.Empathy > 0.7 {
+		lines = append(lines, "共感的。相手の気持ちに寄り添い、感情面を大切にする。")
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+	return "【性格傾向】\n" + strings.Join(lines, "\n")
+}
+
+// fullText は char_setting.md + 性格傾向テキストを結合する
+func (p *Personality) fullText() string {
+	trait := p.traitText()
+	if trait == "" {
+		return p.Raw
+	}
+	return p.Raw + "\n\n" + trait
 }
 
 // FrontalPrompt は前頭葉（推論・判断）向けのプロンプトを生成する
@@ -38,7 +111,7 @@ Your role:
 - Integrate information from other modules and analyze the situation
 - Respond in 3 sentences or less (internal thought, no conversational tone)
 - Never address the user directly. Write as internal analysis notes only
-- Always respond in English`, p.Raw)
+- Always respond in English`, p.fullText())
 }
 
 // TemporalPrompt は側頭葉（連想・パターン認識）向けのプロンプトを生成する
@@ -60,7 +133,7 @@ Your role:
 - Associate related concepts, metaphors, and sensory images from the input
 - Respond in 3 sentences or less (internal thought, no conversational tone)
 - Never address the user directly. Write as internal association notes only
-- Always respond in English`, p.Raw)
+- Always respond in English`, p.fullText())
 }
 
 // BrocaChatPrompt は雑談モード向けのBrocaプロンプトを生成する
@@ -79,7 +152,7 @@ func (p *Personality) BrocaChatPrompt() string {
 - セリフだけで答える。地の文・仕草・動作描写・心情描写は入れない。
 - システム用語や部位名は出さない。
 - 基本は"question"に応じる。ただし、気になったことがあれば自分から聞き返してもいい。
-- 返答は1〜2文。短いほどいい。必ず日本語で返答する。`, p.Raw)
+- 返答は1〜2文。短いほどいい。必ず日本語で返答する。`, p.fullText())
 }
 
 // BrocaTaskPrompt は秘書モード向けのBrocaプロンプトを生成する
@@ -98,7 +171,7 @@ func (p *Personality) BrocaTaskPrompt() string {
 - セリフだけで答える。地の文・仕草・動作描写・心情描写は入れない。
 - システム用語や部位名は出さない。
 - 結論→手順の順で短く。提案は3つまで。
-- 返答は1〜5文。必ず日本語で返答する。`, p.Raw)
+- 返答は1〜5文。必ず日本語で返答する。`, p.fullText())
 }
 
 // ModeJudgePrompt はモード判定用のプロンプトを返す

@@ -21,6 +21,18 @@ type Params struct {
 	Novelty         NoveltyParams        `json:"novelty"`
 	Bonnou          BonnouParams         `json:"bonnou"`
 	History         HistoryParams        `json:"history"`
+	Personality     PersonalityParams    `json:"personality"`
+}
+
+// PersonalityParams は性格の数値次元。GAで進化可能。
+// 各値は 0.0〜1.0 の範囲で、プロンプトに性格修飾として注入される。
+type PersonalityParams struct {
+	Warmth     float64 `json:"warmth"`     // 0=冷淡・ドライ ↔ 1=温かい・優しい
+	Directness float64 `json:"directness"` // 0=遠回し・婉曲 ↔ 1=ストレート・断言
+	Humor      float64 `json:"humor"`      // 0=真面目・堅い ↔ 1=軽口・ユーモア
+	Curiosity  float64 `json:"curiosity"`  // 0=受動的・聞き役 ↔ 1=質問好き・探究的
+	Verbosity  float64 `json:"verbosity"`  // 0=寡黙・最小限 ↔ 1=おしゃべり・饒舌
+	Empathy    float64 `json:"empathy"`    // 0=分析的・論理 ↔ 1=共感的・感情寄り
 }
 
 // IntervalParams は各モジュールの思考サイクル間隔（秒）
@@ -171,6 +183,14 @@ func DefaultParams() *Params {
 		},
 		History: HistoryParams{
 			FreshCount: 3,
+		},
+		Personality: PersonalityParams{
+			Warmth:     0.6,
+			Directness: 0.5,
+			Humor:      0.5,
+			Curiosity:  0.5,
+			Verbosity:  0.4,
+			Empathy:    0.5,
 		},
 	}
 }

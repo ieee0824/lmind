@@ -260,4 +260,12 @@ func mutateParams(p *config.Params, rate float64) {
 
 	// History
 	p.History.FreshCount = perturbInt(p.History.FreshCount, 1, 10)
+
+	// Personality
+	p.Personality.Warmth = perturb(p.Personality.Warmth, 0.0, 1.0)
+	p.Personality.Directness = perturb(p.Personality.Directness, 0.0, 1.0)
+	p.Personality.Humor = perturb(p.Personality.Humor, 0.0, 1.0)
+	p.Personality.Curiosity = perturb(p.Personality.Curiosity, 0.0, 1.0)
+	p.Personality.Verbosity = perturb(p.Personality.Verbosity, 0.0, 1.0)
+	p.Personality.Empathy = perturb(p.Personality.Empathy, 0.0, 1.0)
 }

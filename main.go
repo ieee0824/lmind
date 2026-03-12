@@ -55,12 +55,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 性格設定を読み込み（char_setting.md）
+	// 性格設定を読み込み（char_setting.md + params由来の性格次元）
 	personality, err := config.LoadPersonality(filepath.Join(dataDir, "char_setting.md"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
+	personality = personality.WithTraits(&params.Personality)
 
 	// SQLiteログ初期化（expire: 1週間）
 	lg, err := logger.New(filepath.Join(dataDir, "thoughts.db"))

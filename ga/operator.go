@@ -104,6 +104,14 @@ func Crossover(a, b *Individual, genIdx, childIdx int) *Individual {
 		History: config.HistoryParams{
 			FreshCount: pickInt(pa.History.FreshCount, pb.History.FreshCount),
 		},
+		Personality: config.PersonalityParams{
+			Warmth:     pick(pa.Personality.Warmth, pb.Personality.Warmth),
+			Directness: pick(pa.Personality.Directness, pb.Personality.Directness),
+			Humor:      pick(pa.Personality.Humor, pb.Personality.Humor),
+			Curiosity:  pick(pa.Personality.Curiosity, pb.Personality.Curiosity),
+			Verbosity:  pick(pa.Personality.Verbosity, pb.Personality.Verbosity),
+			Empathy:    pick(pa.Personality.Empathy, pb.Personality.Empathy),
+		},
 	}
 
 	return child
