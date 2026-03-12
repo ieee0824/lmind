@@ -23,26 +23,44 @@ import (
 //   - 直近の思考と内容が重複する内部思考
 //   - goalと無関係な自己言及的メタ思考
 type Attention struct {
-	bus     *bus.ThoughtBus
-	history *bus.History
-	logger  *logger.Logger
-	state   *State
-	inbox   <-chan bus.Thought
+	bus               *bus.ThoughtBus
+	history           *bus.History
+	logger            *logger.Logger
+	state             *State
+	inbox             <-chan bus.Thought
+	salienceThreshold float64
+	baseline          float64
+	goalWeight        float64
+	repetitionPenalty float64
+	metaPenalty       float64
+	userBonus         float64
 }
 
 type AttentionConfig struct {
-	Bus     *bus.ThoughtBus
-	History *bus.History
-	Logger  *logger.Logger
-	State   *State
+	Bus               *bus.ThoughtBus
+	History           *bus.History
+	Logger            *logger.Logger
+	State             *State
+	SalienceThreshold float64
+	Baseline          float64
+	GoalWeight        float64
+	RepetitionPenalty float64
+	MetaPenalty       float64
+	UserBonus         float64
 }
 
 func NewAttention(cfg AttentionConfig) *Attention {
 	a := &Attention{
-		bus:     cfg.Bus,
-		history: cfg.History,
-		logger:  cfg.Logger,
-		state:   cfg.State,
+		bus:               cfg.Bus,
+		history:           cfg.History,
+		logger:            cfg.Logger,
+		state:             cfg.State,
+		salienceThreshold: orDefault(cfg.SalienceThreshold, 0.3),
+		baseline:          orDefault(cfg.Baseline, 0.5),
+		goalWeight:        orDefault(cfg.GoalWeight, 0.3),
+		repetitionPenalty: orDefault(cfg.RepetitionPenalty, 0.3),
+		metaPenalty:       orDefault(cfg.MetaPenalty, 0.2),
+		userBonus:         orDefault(cfg.UserBonus, 0.2),
 	}
 	a.inbox = cfg.Bus.Subscribe("attention")
 	return a
@@ -68,7 +86,7 @@ func (a *Attention) Run(ctx context.Context) {
 			}
 			// frontal/temporal/hypothesis の出力をサリエンス判定
 			salience := a.scoreSalience(t)
-			if salience < 0.3 {
+			if salience < a.salienceThreshold {
 				a.logger.Info("attention", fmt.Sprintf(
 					"低サリエンス(%.2f)を抑制: [%s] %s",
 					salience, t.From, truncateForLog(t.Content, 60)))
@@ -85,7 +103,7 @@ func (a *Attention) Run(ctx context.Context) {
 
 // scoreSalience は思考のサリエンス（重要度）スコアを算出する (0.0〜1.0)
 func (a *Attention) scoreSalience(t bus.Thought) float64 {
-	score := 0.5 // ベースライン
+	score := a.baseline
 
 	words := tokenize(t.Content)
 	if len(words) == 0 {
@@ -98,7 +116,7 @@ func (a *Attention) scoreSalience(t bus.Thought) float64 {
 		goalWords := tokenize(goal)
 		if len(goalWords) > 0 {
 			sim := jaccardSimilarity(words, goalWords)
-			score += sim * 0.3
+			score += sim * a.goalWeight
 		}
 	}
 
@@ -114,17 +132,17 @@ func (a *Attention) scoreSalience(t bus.Thought) float64 {
 		}
 		avgSim := totalSim / float64(len(recent))
 		// 重複が高いほどサリエンスを下げる
-		score -= avgSim * 0.3
+		score -= avgSim * a.repetitionPenalty
 	}
 
 	// 3. メタ自己言及キーワードの検出 (-0.2)
 	if containsMetaKeywords(t.Content) {
-		score -= 0.2
+		score -= a.metaPenalty
 	}
 
-	// 4. ユーザー入力への言及があれば加点 (+0.2)
+	// 4. ユーザー入力への言及があれば加点
 	if containsUserReference(t.Content) {
-		score += 0.2
+		score += a.userBonus
 	}
 
 	// クランプ

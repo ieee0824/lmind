@@ -81,6 +81,15 @@ func NewHistory(maxSize int) *History {
 	}
 }
 
+// SetFreshCount は全文保持する直近件数を設定する
+func (h *History) SetFreshCount(n int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n > 0 {
+		h.freshCount = n
+	}
+}
+
 // SetSummarizer は要約関数を設定する
 func (h *History) SetSummarizer(fn SummarizeFunc) {
 	h.mu.Lock()

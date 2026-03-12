@@ -13,23 +13,29 @@ import (
 // 誤差が大きければ仮説をドロップして思考をリセットする。
 // これにより「同じ仮説の言い換え」ループ（narrative attractor）を破壊する。
 type PredictionError struct {
-	bus    *bus.ThoughtBus
-	logger *logger.Logger
-	state  *State
-	inbox  <-chan bus.Thought
+	bus             *bus.ThoughtBus
+	logger          *logger.Logger
+	state           *State
+	inbox           <-chan bus.Thought
+	highThreshold   float64
+	mediumThreshold float64
 }
 
 type PredictionErrorConfig struct {
-	Bus    *bus.ThoughtBus
-	Logger *logger.Logger
-	State  *State
+	Bus             *bus.ThoughtBus
+	Logger          *logger.Logger
+	State           *State
+	HighThreshold   float64
+	MediumThreshold float64
 }
 
 func NewPredictionError(cfg PredictionErrorConfig) *PredictionError {
 	pe := &PredictionError{
-		bus:    cfg.Bus,
-		logger: cfg.Logger,
-		state:  cfg.State,
+		bus:             cfg.Bus,
+		logger:          cfg.Logger,
+		state:           cfg.State,
+		highThreshold:   orDefault(cfg.HighThreshold, 0.8),
+		mediumThreshold: orDefault(cfg.MediumThreshold, 0.5),
 	}
 	pe.inbox = cfg.Bus.Subscribe("prediction_error")
 	return pe
@@ -73,7 +79,7 @@ func (pe *PredictionError) evaluate(actualInput string) {
 		"誤差: %.2f (予測: %s / 実際: %s)", error_, prediction, actualInput))
 
 	switch {
-	case error_ > 0.8:
+	case error_ > pe.highThreshold:
 		// 高誤差: 予測が大きく外れた → 仮説をドロップ
 		_, hyp := pe.state.Snapshot()
 		if hyp != "" {
@@ -86,7 +92,7 @@ func (pe *PredictionError) evaluate(actualInput string) {
 			})
 		}
 
-	case error_ > 0.5:
+	case error_ > pe.mediumThreshold:
 		// 中誤差: 部分的に外れた → 仮説の再評価を促す
 		pe.bus.Publish(bus.Thought{
 			From:    "prediction_error",

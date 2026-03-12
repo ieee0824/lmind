@@ -12,26 +12,35 @@ import (
 // Critic は自己評価モジュール。
 // 思考の繰り返し・停滞を検出し、思考の質をモニタリングする。
 type Critic struct {
-	bus      *bus.ThoughtBus
-	history  *bus.History
-	logger   *logger.Logger
-	inbox    <-chan bus.Thought
-	interval time.Duration
+	bus                 *bus.ThoughtBus
+	history             *bus.History
+	logger              *logger.Logger
+	inbox               <-chan bus.Thought
+	interval            time.Duration
+	repetitionJaccard   float64
+	stagnationRepRate   float64
+	stagnationDominance float64
 }
 
 type CriticConfig struct {
-	Bus      *bus.ThoughtBus
-	History  *bus.History
-	Logger   *logger.Logger
-	Interval time.Duration // 定期評価の間隔
+	Bus                 *bus.ThoughtBus
+	History             *bus.History
+	Logger              *logger.Logger
+	Interval            time.Duration
+	RepetitionJaccard   float64
+	StagnationRepRate   float64
+	StagnationDominance float64
 }
 
 func NewCritic(cfg CriticConfig) *Critic {
 	c := &Critic{
-		bus:      cfg.Bus,
-		history:  cfg.History,
-		logger:   cfg.Logger,
-		interval: cfg.Interval,
+		bus:                 cfg.Bus,
+		history:             cfg.History,
+		logger:              cfg.Logger,
+		interval:            cfg.Interval,
+		repetitionJaccard:   orDefault(cfg.RepetitionJaccard, 0.6),
+		stagnationRepRate:   orDefault(cfg.StagnationRepRate, 0.5),
+		stagnationDominance: orDefault(cfg.StagnationDominance, 0.6),
 	}
 	c.inbox = cfg.Bus.Subscribe("critic")
 	return c
@@ -81,7 +90,7 @@ func (c *Critic) evaluate() {
 		words1 := tokenize(recent[i-1].Content)
 		words2 := tokenize(recent[i].Content)
 		sim := jaccardSimilarity(words1, words2)
-		if sim > 0.6 {
+		if sim > c.repetitionJaccard {
 			repetitionCount++
 		}
 	}
@@ -96,11 +105,11 @@ func (c *Critic) evaluate() {
 	}
 
 	// 停滞判定
-	isStagnant := repetitionRate > 0.5 || dominance > 0.6
+	isStagnant := repetitionRate > c.stagnationRepRate || dominance > c.stagnationDominance
 
 	if isStagnant {
 		var reason string
-		if repetitionRate > 0.5 {
+		if repetitionRate > c.stagnationRepRate {
 			reason = fmt.Sprintf("Thought repetition detected (%.0f%% similar consecutive thoughts).", repetitionRate*100)
 		} else {
 			var dominant string

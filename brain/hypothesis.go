@@ -15,38 +15,47 @@ import (
 // 前頭葉（構造分析）と側頭葉（状況理解）の出力を受けて、
 // 現在のgoalに対する仮説を生成・更新する。
 type Hypothesis struct {
-	model      string
-	client     *ollama.Client
-	bus        *bus.ThoughtBus
-	history    *bus.History
-	logger     *logger.Logger
-	state      *State
-	modulation *Modulation
-	inbox      <-chan bus.Thought
-	interval   time.Duration
+	model             string
+	client            *ollama.Client
+	bus               *bus.ThoughtBus
+	history           *bus.History
+	logger            *logger.Logger
+	state             *State
+	modulation        *Modulation
+	inbox             <-chan bus.Thought
+	interval          time.Duration
+	dedupJaccard      float64
+	sentimentPositive float64
+	sentimentNegative float64
 }
 
 type HypothesisConfig struct {
-	Model      string
-	Client     *ollama.Client
-	Bus        *bus.ThoughtBus
-	History    *bus.History
-	Logger     *logger.Logger
-	State      *State
-	Modulation *Modulation
-	Interval   time.Duration
+	Model             string
+	Client            *ollama.Client
+	Bus               *bus.ThoughtBus
+	History           *bus.History
+	Logger            *logger.Logger
+	State             *State
+	Modulation        *Modulation
+	Interval          time.Duration
+	DedupJaccard      float64
+	SentimentPositive float64
+	SentimentNegative float64
 }
 
 func NewHypothesis(cfg HypothesisConfig) *Hypothesis {
 	h := &Hypothesis{
-		model:      cfg.Model,
-		client:     cfg.Client,
-		bus:        cfg.Bus,
-		history:    cfg.History,
-		logger:     cfg.Logger,
-		state:      cfg.State,
-		modulation: cfg.Modulation,
-		interval:   cfg.Interval,
+		model:             cfg.Model,
+		client:            cfg.Client,
+		bus:               cfg.Bus,
+		history:           cfg.History,
+		logger:            cfg.Logger,
+		state:             cfg.State,
+		modulation:        cfg.Modulation,
+		interval:          cfg.Interval,
+		dedupJaccard:      orDefault(cfg.DedupJaccard, 0.6),
+		sentimentPositive: orDefault(cfg.SentimentPositive, 0.3),
+		sentimentNegative: orDefault(cfg.SentimentNegative, -0.3),
 	}
 	h.inbox = cfg.Bus.Subscribe("hypothesis")
 	return h
@@ -86,7 +95,7 @@ func (h *Hypothesis) generate(ctx context.Context, incoming bus.Thought) {
 
 	// センチメントゲーティング: ポジティブ文脈でanxiety系仮説を生成しない
 	sentiment := h.state.Sentiment()
-	if sentiment > 0.3 && currentHyp != "" {
+	if sentiment > h.sentimentPositive && currentHyp != "" {
 		lower := strings.ToLower(currentHyp)
 		for _, kw := range []string{"anxiety", "distress", "instability", "fear", "worry", "crisis", "turmoil"} {
 			if strings.Contains(lower, kw) {
@@ -102,9 +111,9 @@ func (h *Hypothesis) generate(ctx context.Context, incoming bus.Thought) {
 	inputLabel := fmt.Sprintf("New analysis from [%s]: %s", incoming.From, incoming.Content)
 
 	sentimentCtx := ""
-	if sentiment > 0.3 {
+	if sentiment > h.sentimentPositive {
 		sentimentCtx = "\nIMPORTANT: The user's current sentiment is POSITIVE. Do not generate anxiety/distress hypotheses."
-	} else if sentiment < -0.3 {
+	} else if sentiment < h.sentimentNegative {
 		sentimentCtx = "\nNote: The user's current sentiment is negative."
 	}
 
@@ -144,7 +153,7 @@ Output ONLY the hypothesis in one short sentence (max 30 words), or "NONE".`, go
 	_, currentHyp2 := h.state.Snapshot()
 	if currentHyp2 != "" {
 		sim := jaccardSimilarity(tokenize(result), tokenize(currentHyp2))
-		if sim > 0.6 {
+		if sim > h.dedupJaccard {
 			return
 		}
 	}
@@ -178,7 +187,7 @@ func (h *Hypothesis) review(ctx context.Context) {
 
 	sentimentCtx := ""
 	sentiment := h.state.Sentiment()
-	if sentiment > 0.3 {
+	if sentiment > h.sentimentPositive {
 		sentimentCtx = "\nIMPORTANT: The user's current sentiment is POSITIVE. If the hypothesis contains anxiety/distress themes, it is likely outdated."
 	}
 
@@ -215,7 +224,7 @@ Output ONLY "VALID" or the updated hypothesis.`, goal, currentHyp, contextStr, s
 	_, prevHyp := h.state.Snapshot()
 	if prevHyp != "" {
 		sim := jaccardSimilarity(tokenize(result), tokenize(prevHyp))
-		if sim > 0.6 {
+		if sim > h.dedupJaccard {
 			return
 		}
 	}

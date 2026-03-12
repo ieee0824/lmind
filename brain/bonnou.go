@@ -16,11 +16,13 @@ import (
 // 情動パラメータが高い思考に反応し、本筋と関係ない連想を生成する。
 // 人間の「ふと頭をよぎる雑念」を再現し、思考の多様性を高める。
 type Bonnou struct {
-	bus      *bus.ThoughtBus
-	history  *bus.History
-	logger   *logger.Logger
-	inbox    <-chan bus.Thought
-	interval time.Duration
+	bus                *bus.ThoughtBus
+	history            *bus.History
+	logger             *logger.Logger
+	inbox              <-chan bus.Thought
+	interval           time.Duration
+	hotWordRetention   time.Duration
+	intensityThreshold float64
 
 	mu       sync.Mutex
 	hotWords []hotWord // 情動の高いキーワードを蓄積
@@ -33,18 +35,30 @@ type hotWord struct {
 }
 
 type BonnouConfig struct {
-	Bus      *bus.ThoughtBus
-	History  *bus.History
-	Logger   *logger.Logger
-	Interval time.Duration
+	Bus                *bus.ThoughtBus
+	History            *bus.History
+	Logger             *logger.Logger
+	Interval           time.Duration
+	HotWordRetention   time.Duration
+	IntensityThreshold float64
 }
 
 func NewBonnou(cfg BonnouConfig) *Bonnou {
+	retention := cfg.HotWordRetention
+	if retention == 0 {
+		retention = 5 * time.Minute
+	}
+	threshold := cfg.IntensityThreshold
+	if threshold == 0 {
+		threshold = 0.5
+	}
 	b := &Bonnou{
-		bus:      cfg.Bus,
-		history:  cfg.History,
-		logger:   cfg.Logger,
-		interval: cfg.Interval,
+		bus:                cfg.Bus,
+		history:            cfg.History,
+		logger:             cfg.Logger,
+		interval:           cfg.Interval,
+		hotWordRetention:   retention,
+		intensityThreshold: threshold,
 	}
 	b.inbox = cfg.Bus.Subscribe("bonnou")
 	return b
@@ -153,7 +167,7 @@ func (b *Bonnou) absorb(t bus.Thought) {
 	}
 
 	// 古いhotWordsを除去（5分以上前）
-	cutoff := now.Add(-5 * time.Minute)
+	cutoff := now.Add(-b.hotWordRetention)
 	filtered := b.hotWords[:0]
 	for _, hw := range b.hotWords {
 		if hw.timestamp.After(cutoff) {
@@ -181,7 +195,7 @@ func (b *Bonnou) wander() {
 	b.mu.Unlock()
 
 	// 情動が低すぎたらスキップ
-	if best.intensity < 0.5 {
+	if best.intensity < b.intensityThreshold {
 		return
 	}
 

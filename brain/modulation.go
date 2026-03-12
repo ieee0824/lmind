@@ -19,10 +19,10 @@ type Modulation struct {
 	mu             sync.RWMutex
 	gains          map[string]float64
 	lastUserInput  time.Time
+	skipThreshold  float64
+	maxGain        float64
+	idleDecayStart time.Duration
 }
-
-// idleDecayStart はユーザー入力がない場合に減衰を開始するまでの待機時間
-const idleDecayStart = 60 * time.Second
 
 func NewModulation() *Modulation {
 	return &Modulation{
@@ -33,8 +33,20 @@ func NewModulation() *Modulation {
 			"curiosity":  1.0,
 			"grounding":  1.0,
 		},
-		lastUserInput: time.Now(),
+		lastUserInput:  time.Now(),
+		skipThreshold:  0.3,
+		maxGain:        2.0,
+		idleDecayStart: 60 * time.Second,
 	}
+}
+
+// Configure はパラメータを外部から設定する
+func (m *Modulation) Configure(skipThreshold, maxGain float64, idleDecayStart time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.skipThreshold = skipThreshold
+	m.maxGain = maxGain
+	m.idleDecayStart = idleDecayStart
 }
 
 // TouchUserInput はユーザー入力があったことを記録する
@@ -65,7 +77,7 @@ func (m *Modulation) Gain(module string) float64 {
 func (m *Modulation) Set(module string, gain float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.gains[module] = math.Max(0.0, math.Min(2.0, gain))
+	m.gains[module] = math.Max(0.0, math.Min(m.maxGain, gain))
 }
 
 // Snapshot は全モジュールのゲインをコピーで返す
@@ -93,7 +105,7 @@ func (m *Modulation) ShouldSkip(module string) bool {
 	}
 	// 簡易的: gain未満の閾値でスキップ
 	// 毎回同じ判定にするためランダムは使わず、0.3未満なら常にスキップ
-	return g < 0.3
+	return g < m.skipThreshold
 }
 
 // Format はログ用に現在のゲインを文字列化する
@@ -116,26 +128,59 @@ type Modulator struct {
 	logger   *logger.Logger
 	inbox    <-chan bus.Thought
 	interval time.Duration
+
+	// 停滞時のゲイン調整量（設定可能）
+	decayFrontal    float64
+	decayTemporal   float64
+	decayHypothesis float64
+	boostCuriosity  float64
+	boostGrounding  float64
+	noveltyRecovery float64
+	recoverStep     float64
+	decayStep       float64
 }
 
 type ModulatorConfig struct {
-	Modulation *Modulation
-	Bus        *bus.ThoughtBus
-	History    *bus.History
-	Logger     *logger.Logger
-	Interval   time.Duration // 回復チェック間隔
+	Modulation      *Modulation
+	Bus             *bus.ThoughtBus
+	History         *bus.History
+	Logger          *logger.Logger
+	Interval        time.Duration // 回復チェック間隔
+	DecayFrontal    float64
+	DecayTemporal   float64
+	DecayHypothesis float64
+	BoostCuriosity  float64
+	BoostGrounding  float64
+	NoveltyRecovery float64
+	RecoverStep     float64
+	DecayStep       float64
 }
 
 func NewModulator(cfg ModulatorConfig) *Modulator {
 	m := &Modulator{
-		mod:      cfg.Modulation,
-		bus:      cfg.Bus,
-		history:  cfg.History,
-		logger:   cfg.Logger,
-		interval: cfg.Interval,
+		mod:             cfg.Modulation,
+		bus:             cfg.Bus,
+		history:         cfg.History,
+		logger:          cfg.Logger,
+		interval:        cfg.Interval,
+		decayFrontal:    orDefault(cfg.DecayFrontal, 0.3),
+		decayTemporal:   orDefault(cfg.DecayTemporal, 0.3),
+		decayHypothesis: orDefault(cfg.DecayHypothesis, 0.2),
+		boostCuriosity:  orDefault(cfg.BoostCuriosity, 0.3),
+		boostGrounding:  orDefault(cfg.BoostGrounding, 0.2),
+		noveltyRecovery: orDefault(cfg.NoveltyRecovery, 0.2),
+		recoverStep:     orDefault(cfg.RecoverStep, 0.1),
+		decayStep:       orDefault(cfg.DecayStep, 0.1),
 	}
 	m.inbox = cfg.Bus.Subscribe("modulator")
 	return m
+}
+
+func orDefault(v, def float64) float64 {
+	if v == 0 {
+		return def
+	}
+	return v
 }
 
 // Run はゲイン調整ループを開始する
@@ -179,13 +224,13 @@ func (m *Modulator) react(t bus.Thought) {
 // onStagnation は停滞検知時のゲイン調整
 func (m *Modulator) onStagnation() {
 	// ループの主犯（思考生成系）を抑制
-	m.mod.Set("frontal", m.mod.Gain("frontal")-0.3)
-	m.mod.Set("temporal", m.mod.Gain("temporal")-0.3)
-	m.mod.Set("hypothesis", m.mod.Gain("hypothesis")-0.2)
+	m.mod.Set("frontal", m.mod.Gain("frontal")-m.decayFrontal)
+	m.mod.Set("temporal", m.mod.Gain("temporal")-m.decayTemporal)
+	m.mod.Set("hypothesis", m.mod.Gain("hypothesis")-m.decayHypothesis)
 
 	// 打開策（探索・アンカー系）をブースト
-	m.mod.Set("curiosity", math.Min(2.0, m.mod.Gain("curiosity")+0.3))
-	m.mod.Set("grounding", math.Min(2.0, m.mod.Gain("grounding")+0.2))
+	m.mod.Set("curiosity", math.Min(m.mod.maxGain, m.mod.Gain("curiosity")+m.boostCuriosity))
+	m.mod.Set("grounding", math.Min(m.mod.maxGain, m.mod.Gain("grounding")+m.boostGrounding))
 
 	m.logger.Info("modulator", fmt.Sprintf("停滞→ゲイン調整: %s", m.mod.Format()))
 }
@@ -206,10 +251,10 @@ func (m *Modulator) onUserInput() {
 func (m *Modulator) onNovelty() {
 	// 思考系を少し回復（新しいネタがあるなら考える価値がある）
 	if m.mod.Gain("frontal") < 1.0 {
-		m.mod.Set("frontal", m.mod.Gain("frontal")+0.2)
+		m.mod.Set("frontal", m.mod.Gain("frontal")+m.noveltyRecovery)
 	}
 	if m.mod.Gain("temporal") < 1.0 {
-		m.mod.Set("temporal", m.mod.Gain("temporal")+0.2)
+		m.mod.Set("temporal", m.mod.Gain("temporal")+m.noveltyRecovery)
 	}
 }
 
@@ -221,14 +266,14 @@ func (m *Modulator) recover() {
 	snapshot := m.mod.Snapshot()
 	changed := false
 
-	if idle < idleDecayStart {
+	if idle < m.mod.idleDecayStart {
 		// 入力直後: 通常の回復（1.0に向かう）
 		for name, gain := range snapshot {
 			if gain < 1.0 {
-				m.mod.Set(name, gain+0.1)
+				m.mod.Set(name, gain+m.recoverStep)
 				changed = true
 			} else if gain > 1.0 {
-				m.mod.Set(name, gain-0.1)
+				m.mod.Set(name, gain-m.recoverStep)
 				changed = true
 			}
 		}
@@ -237,7 +282,7 @@ func (m *Modulator) recover() {
 		// ブースト中のものは通常値に戻す
 		for name, gain := range snapshot {
 			if gain > 1.0 {
-				m.mod.Set(name, gain-0.1)
+				m.mod.Set(name, gain-m.decayStep)
 				changed = true
 			}
 		}

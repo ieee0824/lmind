@@ -20,18 +20,36 @@ import (
 
 func main() {
 	apiAddr := flag.String("api", "", "Web APIモードで起動 (例: :8080)")
+	configPath := flag.String("config", "", "パラメータ設定JSONファイル")
+	dataPath := flag.String("data", "", "データディレクトリ (デフォルト: ~/.lmind)")
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	// データディレクトリ
-	dataDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
-		os.Exit(1)
+	// パラメータ読み込み
+	var params *config.Params
+	if *configPath != "" {
+		var err error
+		params, err = config.LoadParams(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		params = config.DefaultParams()
 	}
-	dataDir = filepath.Join(dataDir, ".lmind")
+
+	// データディレクトリ
+	dataDir := *dataPath
+	if dataDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+			os.Exit(1)
+		}
+		dataDir = filepath.Join(home, ".lmind")
+	}
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
@@ -60,6 +78,7 @@ func main() {
 
 	thoughtBus := bus.New()
 	history := bus.NewHistory(100)
+	history.SetFreshCount(params.History.FreshCount)
 
 	// 古い思考の要約関数を設定（gemma3:1bで軽量に）
 	history.SetSummarizer(func(content string) string {
@@ -101,6 +120,16 @@ func main() {
 
 	// モジュールゲイン管理（ループ時に動的調整）
 	modulation := brain.NewModulation()
+	modulation.Configure(
+		params.Gain.SkipThreshold,
+		params.Gain.MaxGain,
+		time.Duration(params.Gain.IdleDecayStart*float64(time.Second)),
+	)
+
+	// ヘルパー: IntervalのDuration変換
+	dur := func(seconds float64) time.Duration {
+		return time.Duration(seconds * float64(time.Second))
+	}
 
 	// State更新モジュール（ユーザー入力→goal、前頭葉→hypothesis）
 	stateUpdater := brain.NewStateUpdater(brain.StateUpdaterConfig{
@@ -117,7 +146,7 @@ func main() {
 		Name:         "frontal",
 		Model:        "gemma3:4b",
 		SystemPrompt: personality.FrontalPrompt(),
-		Interval:     30 * time.Second,
+		Interval:     dur(params.Intervals.Frontal),
 		Client:       client,
 		Bus:          thoughtBus,
 		History:      history,
@@ -131,7 +160,7 @@ func main() {
 		Name:         "temporal",
 		Model:        "gemma3:1b",
 		SystemPrompt: personality.TemporalPrompt(),
-		Interval:     30 * time.Second,
+		Interval:     dur(params.Intervals.Temporal),
 		Client:       client,
 		Bus:          thoughtBus,
 		History:      history,
@@ -152,19 +181,22 @@ func main() {
 		EmbeddingFn: func(ctx context.Context, text string) ([]float64, error) {
 			return client.Embedding(ctx, "nomic-embed-text", text)
 		},
-		Interval: 25 * time.Second,
+		Interval: dur(params.Intervals.Hippocampus),
 	})
 
 	// 仮説生成モジュール: 前頭葉・側頭葉の出力から仮説を生成・更新
 	hypothesisMod := brain.NewHypothesis(brain.HypothesisConfig{
-		Model:    "gemma3:4b",
-		Client:   client,
-		Bus:      thoughtBus,
-		History:  history,
-		Logger:     lg,
-		State:      mindState,
-		Modulation: modulation,
-		Interval:   35 * time.Second,
+		Model:             "gemma3:4b",
+		Client:            client,
+		Bus:               thoughtBus,
+		History:           history,
+		Logger:            lg,
+		State:             mindState,
+		Modulation:        modulation,
+		Interval:          dur(params.Intervals.Hypothesis),
+		DedupJaccard:      params.Hypothesis.DedupJaccard,
+		SentimentPositive: params.Hypothesis.SentimentPositive,
+		SentimentNegative: params.Hypothesis.SentimentNegative,
 	})
 
 	// 予測モジュール: ユーザーの次の発言を予測
@@ -183,33 +215,41 @@ func main() {
 		Logger: lg,
 	})
 	noveltyMod := brain.NewNovelty(brain.NoveltyConfig{
-		Bus:     thoughtBus,
-		History: history,
-		Logger:  lg,
+		Bus:            thoughtBus,
+		History:        history,
+		Logger:         lg,
+		ScoreThreshold: params.Novelty.ScoreThreshold,
 	})
 	criticMod := brain.NewCritic(brain.CriticConfig{
-		Bus:      thoughtBus,
-		History:  history,
-		Logger:   lg,
-		Interval: 45 * time.Second,
+		Bus:                 thoughtBus,
+		History:             history,
+		Logger:              lg,
+		Interval:            dur(params.Intervals.Critic),
+		RepetitionJaccard:   params.Critic.RepetitionJaccard,
+		StagnationRepRate:   params.Critic.StagnationRepRate,
+		StagnationDominance: params.Critic.StagnationDominance,
 	})
 	curiosityMod := brain.NewCuriosity(brain.CuriosityConfig{
-		Bus:      thoughtBus,
-		History:  history,
-		Logger:   lg,
-		Interval: 60 * time.Second,
+		Bus:               thoughtBus,
+		History:           history,
+		Logger:            lg,
+		Interval:          dur(params.Intervals.Curiosity),
+		FrequentThreshold: params.Curiosity.FrequentThreshold,
+		RareThreshold:     params.Curiosity.RareThreshold,
 	})
 	groundingMod := brain.NewGrounding(brain.GroundingConfig{
 		Bus:      thoughtBus,
 		Logger:   lg,
-		Interval: 40 * time.Second,
+		Interval: dur(params.Intervals.Grounding),
 		Hosts:    client.Hosts(),
 	})
 	bonnouMod := brain.NewBonnou(brain.BonnouConfig{
-		Bus:      thoughtBus,
-		History:  history,
-		Logger:   lg,
-		Interval: 50 * time.Second,
+		Bus:                thoughtBus,
+		History:            history,
+		Logger:             lg,
+		Interval:           dur(params.Intervals.Bonnou),
+		HotWordRetention:   time.Duration(params.Bonnou.HotWordRetention * float64(time.Second)),
+		IntensityThreshold: params.Bonnou.IntensityThreshold,
 	})
 	sentimentMod := brain.NewSentiment(brain.SentimentConfig{
 		Bus:        thoughtBus,
@@ -218,23 +258,40 @@ func main() {
 		Modulation: modulation,
 	})
 	modulatorMod := brain.NewModulator(brain.ModulatorConfig{
-		Modulation: modulation,
-		Bus:        thoughtBus,
-		History:    history,
-		Logger:     lg,
-		Interval:   30 * time.Second,
+		Modulation:      modulation,
+		Bus:             thoughtBus,
+		History:         history,
+		Logger:          lg,
+		Interval:        dur(params.Intervals.Modulator),
+		DecayFrontal:    params.Stagnation.DecayFrontal,
+		DecayTemporal:   params.Stagnation.DecayTemporal,
+		DecayHypothesis: params.Stagnation.DecayHypothesis,
+		BoostCuriosity:  params.Stagnation.BoostCuriosity,
+		BoostGrounding:  params.Stagnation.BoostGrounding,
+		NoveltyRecovery: params.Stagnation.NoveltyRecovery,
+		RecoverStep:     params.Gain.RecoverStep,
+		DecayStep:       params.Gain.DecayStep,
 	})
 	predictionErrorMod := brain.NewPredictionError(brain.PredictionErrorConfig{
-		Bus:    thoughtBus,
-		Logger: lg,
-		State:  mindState,
+		Bus:             thoughtBus,
+		Logger:          lg,
+		State:           mindState,
+		HighThreshold:   params.PredictionError.HighThreshold,
+		MediumThreshold: params.PredictionError.MediumThreshold,
 	})
 	attentionMod := brain.NewAttention(brain.AttentionConfig{
-		Bus:     thoughtBus,
-		History: history,
-		Logger:  lg,
-		State:   mindState,
+		Bus:               thoughtBus,
+		History:           history,
+		Logger:            lg,
+		State:             mindState,
+		SalienceThreshold: params.Attention.SalienceThreshold,
+		Baseline:          params.Attention.Baseline,
+		GoalWeight:        params.Attention.GoalWeight,
+		RepetitionPenalty: params.Attention.RepetitionPenalty,
+		MetaPenalty:       params.Attention.MetaPenalty,
+		UserBonus:         params.Attention.UserBonus,
 	})
+
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
 	go frontal.Run(ctx)
@@ -252,7 +309,6 @@ func main() {
 	go sentimentMod.Run(ctx)
 	go predictionErrorMod.Run(ctx)
 	go attentionMod.Run(ctx)
-
 
 	lg.Info("system", "lmind起動")
 

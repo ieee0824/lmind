@@ -15,26 +15,40 @@ import (
 // criticが停滞を検知したとき、既存の思考からキーワードを再結合して
 // 新しい問いを生成し、思考の多様性を維持する。
 type Curiosity struct {
-	bus      *bus.ThoughtBus
-	history  *bus.History
-	logger   *logger.Logger
-	inbox    <-chan bus.Thought
-	interval time.Duration
+	bus               *bus.ThoughtBus
+	history           *bus.History
+	logger            *logger.Logger
+	inbox             <-chan bus.Thought
+	interval          time.Duration
+	frequentThreshold int
+	rareThreshold     int
 }
 
 type CuriosityConfig struct {
-	Bus      *bus.ThoughtBus
-	History  *bus.History
-	Logger   *logger.Logger
-	Interval time.Duration
+	Bus               *bus.ThoughtBus
+	History           *bus.History
+	Logger            *logger.Logger
+	Interval          time.Duration
+	FrequentThreshold int
+	RareThreshold     int
 }
 
 func NewCuriosity(cfg CuriosityConfig) *Curiosity {
+	freq := cfg.FrequentThreshold
+	if freq == 0 {
+		freq = 3
+	}
+	rare := cfg.RareThreshold
+	if rare == 0 {
+		rare = 1
+	}
 	c := &Curiosity{
-		bus:      cfg.Bus,
-		history:  cfg.History,
-		logger:   cfg.Logger,
-		interval: cfg.Interval,
+		bus:               cfg.Bus,
+		history:           cfg.History,
+		logger:            cfg.Logger,
+		interval:          cfg.Interval,
+		frequentThreshold: freq,
+		rareThreshold:     rare,
 	}
 	c.inbox = cfg.Bus.Subscribe("curiosity")
 	return c
@@ -87,9 +101,9 @@ func (c *Curiosity) explore() {
 	// 頻出キーワード（主流の思考）と稀出キーワード（周辺概念）を分離
 	var frequent, rare []string
 	for w, count := range wordFreq {
-		if count >= 3 {
+		if count >= c.frequentThreshold {
 			frequent = append(frequent, w)
-		} else if count == 1 {
+		} else if count <= c.rareThreshold {
 			rare = append(rare, w)
 		}
 	}

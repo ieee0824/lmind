@@ -13,23 +13,26 @@ import (
 // 新しい思考が直近の思考とどれだけ異なるかをキーワード重複率で判定し、
 // 新規性が高い場合にバスに通知する。
 type Novelty struct {
-	bus     *bus.ThoughtBus
-	history *bus.History
-	logger  *logger.Logger
-	inbox   <-chan bus.Thought
+	bus            *bus.ThoughtBus
+	history        *bus.History
+	logger         *logger.Logger
+	inbox          <-chan bus.Thought
+	scoreThreshold float64
 }
 
 type NoveltyConfig struct {
-	Bus     *bus.ThoughtBus
-	History *bus.History
-	Logger  *logger.Logger
+	Bus            *bus.ThoughtBus
+	History        *bus.History
+	Logger         *logger.Logger
+	ScoreThreshold float64
 }
 
 func NewNovelty(cfg NoveltyConfig) *Novelty {
 	n := &Novelty{
-		bus:     cfg.Bus,
-		history: cfg.History,
-		logger:  cfg.Logger,
+		bus:            cfg.Bus,
+		history:        cfg.History,
+		logger:         cfg.Logger,
+		scoreThreshold: orDefault(cfg.ScoreThreshold, 0.85),
 	}
 	n.inbox = cfg.Bus.Subscribe("novelty")
 	return n
@@ -89,7 +92,7 @@ func (n *Novelty) evaluate(incoming bus.Thought) {
 	noveltyScore := 1.0 - overlapRate
 
 	// 新規性が高い場合のみ通知（閾値厳しめ: user入力でも安易に1.00にしない）
-	if noveltyScore > 0.85 {
+	if noveltyScore > n.scoreThreshold {
 		thought := bus.Thought{
 			From:    "novelty",
 			Content: fmt.Sprintf("Novel input detected (score: %.2f) from [%s]. New concepts worth exploring.", noveltyScore, incoming.From),
