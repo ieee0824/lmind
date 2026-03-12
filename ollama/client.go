@@ -20,15 +20,64 @@ type hostEntry struct {
 	weight int // 重み（大きいほど優先）
 }
 
+// hostPool はホストプール（weighted least-connections用）
+type hostPool struct {
+	hosts     []hostEntry
+	inflight  []atomic.Int64
+	totalReqs []atomic.Int64
+}
+
+func newHostPool(hosts []hostEntry) *hostPool {
+	return &hostPool{
+		hosts:     hosts,
+		inflight:  make([]atomic.Int64, len(hosts)),
+		totalReqs: make([]atomic.Int64, len(hosts)),
+	}
+}
+
+// leastLoadedHosts はweighted inflight（inflight/weight）が少ない順にホストインデックスを返す
+func (p *hostPool) leastLoadedHosts() []int {
+	type hostLoad struct {
+		index        int
+		weightedLoad float64
+	}
+	loads := make([]hostLoad, len(p.hosts))
+	for i := range p.hosts {
+		loads[i] = hostLoad{
+			index:        i,
+			weightedLoad: float64(p.inflight[i].Load()) / float64(p.hosts[i].weight),
+		}
+	}
+	for i := 1; i < len(loads); i++ {
+		for j := i; j > 0 && loads[j].weightedLoad < loads[j-1].weightedLoad; j-- {
+			loads[j], loads[j-1] = loads[j-1], loads[j]
+		}
+	}
+	indices := make([]int, len(loads))
+	for i, l := range loads {
+		indices[i] = l.index
+	}
+	return indices
+}
+
+func (p *hostPool) stats() []HostStats {
+	stats := make([]HostStats, len(p.hosts))
+	for i, h := range p.hosts {
+		stats[i] = HostStats{
+			Host:     h.url,
+			Weight:   h.weight,
+			Inflight: p.inflight[i].Load(),
+			Total:    p.totalReqs[i].Load(),
+		}
+	}
+	return stats
+}
+
 type Client struct {
-	hosts      []hostEntry
+	chat       *hostPool // chat用ホストプール
+	embed      *hostPool // embedding用ホストプール（nilならchatと共用）
 	httpClient *http.Client
 	debug      bool
-
-	// ホストごとの実行中リクエスト数（weighted least-connections用）
-	inflight []atomic.Int64
-	// ホストごとの累計リクエスト数
-	totalReqs []atomic.Int64
 }
 
 type Message struct {
@@ -46,6 +95,13 @@ type ChatResponse struct {
 	Message Message `json:"message"`
 }
 
+type HostStats struct {
+	Host     string
+	Weight   int
+	Inflight int64
+	Total    int64
+}
+
 // parseHost は "http://host:port*weight" 形式をパースする。
 // 重み省略時はデフォルト1。
 func parseHost(raw string) hostEntry {
@@ -59,116 +115,103 @@ func parseHost(raw string) hostEntry {
 	return hostEntry{url: raw, weight: 1}
 }
 
-// New はOllamaクライアントを作成する。
-// OLLAMA_HOSTS 環境変数にカンマ区切りで複数ホストを指定すると
-// weighted least-connections方式で分散する。
-// 重み指定: http://host:port*3 （省略時は1）
-// 例: OLLAMA_HOSTS=http://localhost:11434*3,http://192.168.50.47:11434*1
-func New(baseURL string) *Client {
+func parseHosts(env string) []hostEntry {
 	var hosts []hostEntry
+	for _, h := range strings.Split(env, ",") {
+		h = strings.TrimSpace(h)
+		if h != "" {
+			hosts = append(hosts, parseHost(h))
+		}
+	}
+	return hosts
+}
+
+// New はOllamaクライアントを作成する。
+// OLLAMA_HOSTS — chat用ホスト（カンマ区切り、重み指定可）
+// OLLAMA_EMBED_HOSTS — embedding専用ホスト（指定時はembeddingをこちらに振る）
+// OLLAMA_EMBED_HOSTS未指定時はOLLAMA_HOSTSをembeddingにも使う
+// 例:
+//
+//	OLLAMA_HOSTS=http://localhost:11434*3,http://192.168.50.2:11434
+//	OLLAMA_EMBED_HOSTS=http://192.168.50.47:11434,http://localhost:11434
+func New(baseURL string) *Client {
+	var chatHosts []hostEntry
 
 	if baseURL != "" {
-		hosts = []hostEntry{parseHost(baseURL)}
+		chatHosts = []hostEntry{parseHost(baseURL)}
 	}
 
-	if len(hosts) == 0 {
+	if len(chatHosts) == 0 {
 		if env := os.Getenv("OLLAMA_HOSTS"); env != "" {
-			for _, h := range strings.Split(env, ",") {
-				h = strings.TrimSpace(h)
-				if h != "" {
-					hosts = append(hosts, parseHost(h))
-				}
-			}
+			chatHosts = parseHosts(env)
 		}
 	}
 
-	if len(hosts) == 0 {
+	if len(chatHosts) == 0 {
 		if env := os.Getenv("OLLAMA_HOST"); env != "" {
-			hosts = []hostEntry{parseHost(env)}
+			chatHosts = []hostEntry{parseHost(env)}
 		}
 	}
 
-	if len(hosts) == 0 {
-		hosts = []hostEntry{{url: "http://localhost:11434", weight: 1}}
+	if len(chatHosts) == 0 {
+		chatHosts = []hostEntry{{url: "http://localhost:11434", weight: 1}}
 	}
 
-	return &Client{
-		hosts: hosts,
+	c := &Client{
+		chat: newHostPool(chatHosts),
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
-		debug:     os.Getenv("LMIND_DEBUG") != "",
-		inflight:  make([]atomic.Int64, len(hosts)),
-		totalReqs: make([]atomic.Int64, len(hosts)),
+		debug: os.Getenv("LMIND_DEBUG") != "",
 	}
+
+	// embedding専用ホスト
+	if env := os.Getenv("OLLAMA_EMBED_HOSTS"); env != "" {
+		embedHosts := parseHosts(env)
+		if len(embedHosts) > 0 {
+			c.embed = newHostPool(embedHosts)
+		}
+	}
+
+	return c
+}
+
+// poolFor は指定パスに対応するホストプールを返す
+func (c *Client) poolFor(path string) *hostPool {
+	if c.embed != nil && strings.Contains(path, "embed") {
+		return c.embed
+	}
+	return c.chat
 }
 
 // Hosts は接続先のホスト一覧を返す
 func (c *Client) Hosts() []string {
-	result := make([]string, len(c.hosts))
-	for i, h := range c.hosts {
+	var result []string
+	for _, h := range c.chat.hosts {
+		s := h.url
 		if h.weight != 1 {
-			result[i] = fmt.Sprintf("%s*%d", h.url, h.weight)
-		} else {
-			result[i] = h.url
+			s = fmt.Sprintf("%s*%d", h.url, h.weight)
 		}
+		result = append(result, s)
 	}
 	return result
 }
 
 // Stats はホストごとのリクエスト統計を返す
 func (c *Client) Stats() []HostStats {
-	stats := make([]HostStats, len(c.hosts))
-	for i, h := range c.hosts {
-		stats[i] = HostStats{
-			Host:     h.url,
-			Weight:   h.weight,
-			Inflight: c.inflight[i].Load(),
-			Total:    c.totalReqs[i].Load(),
-		}
+	stats := c.chat.stats()
+	if c.embed != nil {
+		stats = append(stats, c.embed.stats()...)
 	}
 	return stats
 }
 
-type HostStats struct {
-	Host     string
-	Weight   int
-	Inflight int64
-	Total    int64
-}
-
-// leastLoadedHosts はweighted inflight（inflight/weight）が少ない順にホストインデックスを返す
-func (c *Client) leastLoadedHosts() []int {
-	type hostLoad struct {
-		index        int
-		weightedLoad float64 // inflight / weight（小さいほど空いている）
-	}
-	loads := make([]hostLoad, len(c.hosts))
-	for i := range c.hosts {
-		loads[i] = hostLoad{
-			index:        i,
-			weightedLoad: float64(c.inflight[i].Load()) / float64(c.hosts[i].weight),
-		}
-	}
-	// 安定ソート: weighted load少ない順
-	for i := 1; i < len(loads); i++ {
-		for j := i; j > 0 && loads[j].weightedLoad < loads[j-1].weightedLoad; j-- {
-			loads[j], loads[j-1] = loads[j-1], loads[j]
-		}
-	}
-	indices := make([]int, len(loads))
-	for i, l := range loads {
-		indices[i] = l.index
-	}
-	return indices
-}
-
 // doPost はPOSTリクエストを送信し、失敗時に別ホストへフォールバックする。
-// weighted least-connections方式: inflight/weightが最も小さいホストを優先する。
 func (c *Client) doPost(ctx context.Context, path string, body []byte) ([]byte, error) {
+	pool := c.poolFor(path)
 	var lastErr error
-	for _, idx := range c.leastLoadedHosts() {
-		host := c.hosts[idx].url
+	for _, idx := range pool.leastLoadedHosts() {
+		host := pool.hosts[idx].url
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, host+path, bytes.NewReader(body))
 		if err != nil {
@@ -177,10 +220,10 @@ func (c *Client) doPost(ctx context.Context, path string, body []byte) ([]byte, 
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 
-		c.inflight[idx].Add(1)
-		c.totalReqs[idx].Add(1)
+		pool.inflight[idx].Add(1)
+		pool.totalReqs[idx].Add(1)
 		resp, err := c.httpClient.Do(httpReq)
-		c.inflight[idx].Add(-1)
+		pool.inflight[idx].Add(-1)
 
 		if err != nil {
 			lastErr = fmt.Errorf("do request (%s): %w", host, err)
@@ -199,9 +242,9 @@ func (c *Client) doPost(ctx context.Context, path string, body []byte) ([]byte, 
 			continue
 		}
 
-		if c.debug && len(c.hosts) > 1 {
+		if c.debug && len(pool.hosts) > 1 {
 			fmt.Fprintf(os.Stderr, "[ollama] %s → %s (w=%d, inflight: %d, total: %d)\n",
-				path, host, c.hosts[idx].weight, c.inflight[idx].Load(), c.totalReqs[idx].Load())
+				path, host, pool.hosts[idx].weight, pool.inflight[idx].Load(), pool.totalReqs[idx].Load())
 		}
 
 		return respBody, nil
@@ -254,7 +297,11 @@ func (c *Client) Embedding(ctx context.Context, model, text string) ([]float64, 
 
 // StatsReporter は定期的にホスト統計をログ出力するgoroutineを起動する
 func (c *Client) StatsReporter(ctx context.Context, interval time.Duration, wg *sync.WaitGroup) {
-	if len(c.hosts) <= 1 || !c.debug {
+	totalHosts := len(c.chat.hosts)
+	if c.embed != nil {
+		totalHosts += len(c.embed.hosts)
+	}
+	if totalHosts <= 1 || !c.debug {
 		return
 	}
 	if wg != nil {
@@ -272,8 +319,14 @@ func (c *Client) StatsReporter(ctx context.Context, interval time.Duration, wg *
 				return
 			case <-ticker.C:
 				var parts []string
-				for _, s := range c.Stats() {
+				for _, s := range c.chat.stats() {
 					parts = append(parts, fmt.Sprintf("%s(w=%d, inflight=%d, total=%d)", s.Host, s.Weight, s.Inflight, s.Total))
+				}
+				if c.embed != nil {
+					parts = append(parts, "|embed|")
+					for _, s := range c.embed.stats() {
+						parts = append(parts, fmt.Sprintf("%s(w=%d, inflight=%d, total=%d)", s.Host, s.Weight, s.Inflight, s.Total))
+					}
 				}
 				fmt.Fprintf(os.Stderr, "[ollama-stats] %s\n", strings.Join(parts, " | "))
 			}
