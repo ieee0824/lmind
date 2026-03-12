@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,6 +19,9 @@ import (
 )
 
 func main() {
+	apiAddr := flag.String("api", "", "Web APIモードで起動 (例: :8080)")
+	flag.Parse()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -231,6 +235,11 @@ func main() {
 		Logger:  lg,
 		State:   mindState,
 	})
+	rapportMod := brain.NewRapport(brain.RapportConfig{
+		Bus:    thoughtBus,
+		Logger: lg,
+		Store:  lg,
+	})
 
 	// 脳部位の思考ループを開始
 	go stateUpdater.Run(ctx)
@@ -249,6 +258,7 @@ func main() {
 	go sentimentMod.Run(ctx)
 	go predictionErrorMod.Run(ctx)
 	go attentionMod.Run(ctx)
+	go rapportMod.Run(ctx)
 
 	lg.Info("system", "lmind起動")
 
@@ -291,6 +301,16 @@ func main() {
 		TaskPrompt:       personality.BrocaTaskPrompt(),
 		ModeJudgePrompt:  personality.ModeJudgePrompt(),
 		InhibitionPrompt: personality.InhibitionPrompt(),
+		Rapport:          rapportMod,
 	})
-	chatServer.Run(ctx)
+	if *apiAddr != "" {
+		// Web APIモード
+		if err := chatServer.RunAPI(ctx, *apiAddr); err != nil {
+			fmt.Fprintf(os.Stderr, "API server error: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// CLIモード
+		chatServer.Run(ctx)
+	}
 }

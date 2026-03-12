@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ieee0824/lmind/brain"
 	"github.com/ieee0824/lmind/bus"
 	"github.com/ieee0824/lmind/logger"
 	"github.com/ieee0824/lmind/ollama"
@@ -28,6 +29,7 @@ type ServerConfig struct {
 	TaskPrompt       string // 秘書モード用
 	ModeJudgePrompt  string // モード判定用
 	InhibitionPrompt string
+	Rapport          *brain.Rapport // ラポートモジュール（nilなら無効）
 }
 
 // Server はCLIベースのチャットインターフェース
@@ -42,6 +44,7 @@ type Server struct {
 	taskPrompt       string
 	modeJudgePrompt  string
 	inhibitionPrompt string
+	rapport          *brain.Rapport
 	inbox            <-chan bus.Thought
 
 	mu         sync.Mutex
@@ -63,30 +66,33 @@ func New(cfg ServerConfig) *Server {
 		taskPrompt:       cfg.TaskPrompt,
 		modeJudgePrompt:  cfg.ModeJudgePrompt,
 		inhibitionPrompt: cfg.InhibitionPrompt,
+		rapport:          cfg.Rapport,
 	}
 	s.inbox = cfg.Bus.Subscribe("chat")
 	return s
 }
 
-// Run はユーザーからの入力を待ち受ける
-func (s *Server) Run(ctx context.Context) {
-	// バスからの思考を消費しつつ、アクティブ部位を追跡
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case t := <-s.inbox:
-				s.mu.Lock()
-				s.lastActive = t.From
-				s.mu.Unlock()
+// drainBus はバスからの思考を消費し、アクティブ部位を追跡する
+func (s *Server) drainBus(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-s.inbox:
+			s.mu.Lock()
+			s.lastActive = t.From
+			s.mu.Unlock()
 
-				if strings.HasPrefix(t.Content, "【エラー】") {
-					fmt.Fprintf(os.Stderr, "\n%s: %s\n> ", t.From, t.Content)
-				}
+			if strings.HasPrefix(t.Content, "【エラー】") {
+				fmt.Fprintf(os.Stderr, "\n%s: %s\n> ", t.From, t.Content)
 			}
 		}
-	}()
+	}
+}
+
+// Run はユーザーからの入力を待ち受ける（CLIモード）
+func (s *Server) Run(ctx context.Context) {
+	go s.drainBus(ctx)
 
 	lines := make(chan string)
 	go func() {
@@ -229,6 +235,11 @@ func (s *Server) respond(ctx context.Context, question string) string {
 		systemPrompt = s.taskPrompt
 	}
 
+	// ラポートレベルに応じてプロンプトを動的に調整
+	if s.rapport != nil {
+		systemPrompt += "\n\n" + rapportDirective(s.rapport.Level(), s.rapport.Score())
+	}
+
 	recent := s.history.Recent(10)
 
 	var thoughtList []string
@@ -365,7 +376,8 @@ var narrativePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`…+[\s　]*$`),               // 行末の余韻「…」だけの行
 	regexp.MustCompile(`[\*＊]`),                    // 残ったアスタリスク
 	regexp.MustCompile(`(?m)^[\s　]*\*\s+.*$`),     // マークダウンリスト（* item）
-	regexp.MustCompile(`「|」`),                     // かぎかっこ除去
+	regexp.MustCompile(`「|」`),                                                             // かぎかっこ除去
+	regexp.MustCompile(`[\x{1F300}-\x{1F9FF}\x{2600}-\x{27BF}\x{FE00}-\x{FE0F}\x{200D}]+`), // 絵文字除去
 }
 
 // stripNarrative はLLM出力から地の文・ト書き・装飾を機械的に除去する
@@ -400,4 +412,44 @@ func (s *Server) showThoughts() {
 		fmt.Printf("[%s] %s: %s\n", t.CreatedAt.Format("15:04:05"), t.From, t.Content)
 	}
 	fmt.Println("---")
+}
+
+// rapportDirective はラポートレベルに応じた人格表現の指示を返す
+//
+// 重要: 親密度が上がっても人格の芯（口調・文量・振る舞い）は変わらない。
+// 変わるのは「心の距離感」だけ。テンションは上げない。
+func rapportDirective(level string, score float64) string {
+	// 全レベル共通の制約
+	const constraint = `
+【重要】親密度が高くても以下は守ること：
+- 返答は1〜2文。短いほどいい。
+- 絵文字は使わない。
+- テンションは上げない。落ち着いたトーンを維持。
+- 同じ話題やフレーズを繰り返さない。
+- 相手の話題に合わせる。自分の過去の話に戻らない。`
+
+	var directive string
+	switch level {
+	case "intimate":
+		directive = fmt.Sprintf(`【親密度: %.0f%% — intimate】
+- 本音が出る。取り繕わない。
+- ぼそっと照れたり、素っ気なく優しい。
+- 気になったことは自然に聞き返す。
+- くだけた語尾OK。ただし騒がしくならない。`, score*100)
+	case "friendly":
+		directive = fmt.Sprintf(`【親密度: %.0f%% — friendly】
+- リラックスした口調。軽口を混ぜていい。
+- 自分の意見も自然に出す。
+- 興味があれば聞き返していい。`, score*100)
+	case "neutral":
+		directive = fmt.Sprintf(`【親密度: %.0f%% — neutral】
+- 普通の距離感。丁寧すぎず、くだけすぎず。
+- たまに聞き返すくらいはOK。`, score*100)
+	default: // guarded
+		directive = fmt.Sprintf(`【親密度: %.0f%% — guarded】
+- やや警戒気味。丁寧めの口調。
+- 踏み込まない。様子見。
+- 自分からは聞き返さない。`, score*100)
+	}
+	return directive + constraint
 }
