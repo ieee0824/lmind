@@ -99,6 +99,9 @@ func main() {
 	// 初期集団生成
 	pop := ga.NewPopulation(bin, *basePort, baseDir, charPath, *population)
 
+	// 村の地理座標（世代間で引き継ぐ）
+	var villagePositions [][2]float64
+
 	for gen := range *generations {
 		fmt.Printf("--- 第%d世代 ---\n", gen+1)
 
@@ -121,9 +124,9 @@ func main() {
 		}
 		fmt.Println(" OK")
 
-		// 村モデルによる対話
+		// 村モデルによる対話（地理座標を引き継ぐ）
 		inds := pop.Individuals
-		topo := ga.NewTopology(inds, *villageSize, *rounds, *interRounds, *interRate)
+		topo := ga.NewTopology(inds, *villageSize, *rounds, *interRounds, *interRate, villagePositions)
 		fmt.Printf("対話中 (%d村)...\n", len(topo.Villages))
 		if err := topo.RunConversations(ctx, *seed, ollamaClient); err != nil {
 			fmt.Fprintf(os.Stderr, "  対話エラー: %v\n", err)
@@ -163,14 +166,21 @@ func main() {
 			fmt.Printf("  ★ 歴代最高更新: %s (fitness=%.4f)\n", bestEverID, bestEverFitness)
 		}
 
-		// 村の生存競争（征服）
+		// 村の吸収判定（近接+同化+fitness差 → 弱い村が部分的に取り込まれる）
 		if len(topo.Villages) >= 2 {
-			cr, _ := topo.Conquest(gen+1, *basePort)
-			if cr != nil {
-				fmt.Printf("  ⚔ 征服: %s(avg=%.4f) → %s(avg=%.4f) エース%s移住 + %d人子孫\n",
-					cr.WinnerID, cr.WinnerAvg, cr.LoserID, cr.LoserAvg, cr.MigratedID, cr.Replaced)
+			ar, err := topo.Absorb(ctx, ollamaClient, gen+1, *basePort)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  吸収判定エラー: %v\n", err)
+			}
+			if ar != nil {
+				fmt.Printf("  🫁 吸収: %s(avg=%.4f) → %s(avg=%.4f) 類似度=%.3f 距離=%.2f 置換%d人\n",
+					ar.AbsorberID, ar.AbsorberAvg, ar.AbsorbedID, ar.AbsorbedAvg,
+					ar.Similarity, ar.GeoDist, ar.Replaced)
 			}
 		}
+
+		// 座標を保存（次世代に引き継ぐ）
+		villagePositions = topo.Positions()
 
 		// シャットダウン
 		fmt.Print("シャットダウン中...")
@@ -179,7 +189,6 @@ func main() {
 		fmt.Println(" OK")
 
 		// 次世代生成（最終世代以外）
-		// 征服後の個体群を含めて次世代へ
 		if gen+1 < *generations {
 			allInds := topo.AllIndividuals()
 			nextInds := ga.NextGeneration(allInds, gen+1, *basePort)

@@ -35,7 +35,7 @@ func TestNewTopology(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inds := makeInds(tt.n)
-			topo := NewTopology(inds, tt.villageSize, 5, 2, 0.5)
+			topo := NewTopology(inds, tt.villageSize, 5, 2, 0.5, nil)
 
 			if len(topo.Villages) != tt.wantVillages {
 				t.Errorf("villages = %d, want %d", len(topo.Villages), tt.wantVillages)
@@ -53,6 +53,66 @@ func TestNewTopology(t *testing.T) {
 				t.Errorf("total members = %d, want %d", total, tt.n)
 			}
 		})
+	}
+}
+
+func TestVillagePositions(t *testing.T) {
+	inds := make([]*Individual, 6)
+	for i := range 6 {
+		inds[i] = &Individual{ID: fmt.Sprintf("ind%d", i), Params: *config.DefaultParams()}
+	}
+
+	// 初回: 円形配置
+	topo := NewTopology(inds, 3, 5, 2, 0.5, nil)
+	if len(topo.Villages) != 2 {
+		t.Fatalf("expected 2 villages, got %d", len(topo.Villages))
+	}
+
+	// 座標が単位円上にあることを確認
+	for _, v := range topo.Villages {
+		dist := math.Sqrt(v.X*v.X + v.Y*v.Y)
+		if math.Abs(dist-1.0) > 0.01 {
+			t.Errorf("village %s at (%.2f, %.2f), dist from origin = %.2f, want 1.0", v.ID, v.X, v.Y, dist)
+		}
+	}
+
+	// 座標引き継ぎ
+	positions := topo.Positions()
+	topo2 := NewTopology(inds, 3, 5, 2, 0.5, positions)
+	for i, v := range topo2.Villages {
+		if v.X != positions[i][0] || v.Y != positions[i][1] {
+			t.Errorf("position not preserved for village %d", i)
+		}
+	}
+}
+
+func TestGeoDist(t *testing.T) {
+	a := &Village{X: 0, Y: 0}
+	b := &Village{X: 3, Y: 4}
+	got := GeoDist(a, b)
+	if math.Abs(got-5.0) > 0.001 {
+		t.Errorf("GeoDist = %.4f, want 5.0", got)
+	}
+}
+
+func TestGeoInterPairs(t *testing.T) {
+	inds := make([]*Individual, 8)
+	for i := range 8 {
+		inds[i] = &Individual{ID: fmt.Sprintf("ind%d", i), Params: *config.DefaultParams()}
+	}
+
+	// interRate=1.0 で交流が発生する
+	topo := NewTopology(inds, 2, 5, 2, 1.0, nil)
+	pairs := topo.geoInterPairs()
+	if len(pairs) == 0 {
+		t.Error("geoInterPairs returned no pairs with rate=1.0")
+	}
+
+	// interRate=0.0 で交流なし
+	topo2 := NewTopology(inds, 2, 5, 2, 0.0, nil)
+	pairs2 := topo2.geoInterPairs()
+	if len(pairs2) != 0 {
+		t.Errorf("geoInterPairs with rate=0.0: got %d pairs, want 0", len(pairs2))
 	}
 }
 
@@ -74,29 +134,6 @@ func TestAllPairs(t *testing.T) {
 			t.Errorf("duplicate pair: %s", key)
 		}
 		seen[key] = true
-	}
-}
-
-func TestInterVillagePairs(t *testing.T) {
-	inds := make([]*Individual, 8)
-	for i := range 8 {
-		inds[i] = &Individual{ID: fmt.Sprintf("ind%d", i), Params: *config.DefaultParams()}
-	}
-
-	// interRate=1.0 で必ず交流が発生する
-	topo := NewTopology(inds, 2, 5, 2, 1.0)
-	pairs := topo.randomInterPairs()
-
-	// 4村のリング → 隣接3組 + リング1組 = 4組
-	if len(pairs) != 4 {
-		t.Errorf("interVillagePairs with rate=1.0: got %d pairs, want 4", len(pairs))
-	}
-
-	// interRate=0.0 で交流なし
-	topo2 := NewTopology(inds, 2, 5, 2, 0.0)
-	pairs2 := topo2.randomInterPairs()
-	if len(pairs2) != 0 {
-		t.Errorf("interVillagePairs with rate=0.0: got %d pairs, want 0", len(pairs2))
 	}
 }
 
@@ -131,9 +168,9 @@ func TestSemanticInterPairs(t *testing.T) {
 		{ID: "v2", Members: []*Individual{{ID: "ind2"}}},
 	}
 	vecs := [][]float64{
-		{1, 0, 0},   // v0
-		{0.9, 0.1, 0}, // v1: v0に近い
-		{0, 0, 1},   // v2: v0から遠い
+		{1, 0, 0},      // v0
+		{0.9, 0.1, 0},  // v1: v0に近い
+		{0, 0, 1},       // v2: v0から遠い
 	}
 
 	// interRate=1.0で全ペアが交流
